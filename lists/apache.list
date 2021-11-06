@@ -1,0 +1,13 @@
+httpd
+httpd-filesystem
+httpd-tools
+http-parser
+mod_fcgid
+mod_geoip
+mod_http2
+mod_maxminddb
+mod_perl
+mod_ssl
+mod_wsgi
+mod_proxy_html
+mod_proxy_uwsgi
