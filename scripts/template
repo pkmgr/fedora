@@ -8,7 +8,7 @@
 # @Copyright     : Copyright: (c) 2021 Jason Hempstead, Casjays Developments
 # @Created       : Thursday, Nov 04, 2021 16:59 EDT
 # @File          : template.sh
-# @Description   : template installer for Fedora
+# @Description   : template installer for fedora
 # @TODO          :
 # @Other         :
 # @Resource      :
@@ -19,6 +19,8 @@ USER="${SUDO_USER:-${USER}}"
 HOME="${USER_HOME:-${HOME}}"
 SRC_DIR="${BASH_SOURCE%/*}"
 SCRIPT_DESCRIBE="template"
+SCRIPT_OS="fedora"
+GITHUB_USER="${GITHUB_USER:-casjay}"
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 # Set bash options
 if [[ "$1" == "--debug" ]]; then shift 1 && set -xo pipefail && export SCRIPT_OPTS="--debug" && export _DEBUG="on"; fi
@@ -37,8 +39,8 @@ else
   . "/tmp/$SCRIPTSFUNCTFILE"
 fi
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-[[ "$1" == "--help" ]] && printf_exit "${GREEN}apache installer for Fedora"
-cat /etc/*-release | grep 'ID_LIKE=' | grep -E 'rhel|centos' &>/dev/null && true || printf_exit "This installer is meant to be run on a CentOS based system"
+[[ "$1" == "--help" ]] && printf_exit "${GREEN}${SCRIPT_DESCRIBE} installer for $SCRIPT_OS"
+cat /etc/*-release | grep -E 'ID=|ID_LIKE=' | grep -qwE "$SCRIPT_OS" &>/dev/null && true || printf_exit "This installer is meant to be run on a $SCRIPT_OS based system"
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 system_service_exists() { systemctl status "$1" 2>&1 | grep -iq "$1" && return 0 || return 1; }
 system_service_enable() { systemctl status "$1" 2>&1 | grep -iq 'inactive' && execute "systemctl enable $1" "Enabling service: $1" || return 1; }
@@ -82,23 +84,52 @@ disable_selinux() {
   fi
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ssh_key() {
+  printf_green "Grabbing $GITHUB_USER ssh key"
+  [[ -d "/root/.ssh" ]] || mkdir -p "/root/.ssh"
+  if urlverify "https://github.com/$GITHUB_USER.keys"; then
+    curl -q -SLs "https://github.com/$GITHUB_USER.keys" | tee "/root/.ssh/authorized_keys" &>/dev/null &&
+      printf_green "Successfully added github ssh key" || printf_return "Failed to add github ssh key"
+  else
+    printf_return "Can not get key from https://github.com/$GITHUB_USER.keys"
+  fi
+  return 0
+}
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 rm_repo_files() { printf_green "Removing files from /etc/yum.repos.d" && rm -Rf /etc/yum.repos.d/*; }
 run_external() { printf_green "Executing $*" && eval "$*" >/dev/null 2>&1 || return 1; }
 grab_remote_file() { urlverify "$1" && curl -q -SLs "$1" || exit 1; }
 save_remote_file() { urlverify "$1" && curl -q -SLs "$1" | tee "$2" &>/dev/null || exit 1; }
-retrieve_version_file() { grab_remote_file "https://github.com/casjay-base/fedora/raw/main/version.txt" | head -n1 || echo "Unknown version"; }
+retrieve_version_file() { grab_remote_file "https://github.com/casjay-base/centos/raw/main/version.txt" | head -n1 || echo "Unknown version"; }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 retrieve_repo_file() {
   local RELEASE_VER RELEASE_FILE IFS
-  RELEASE_FILE="https://github.com/rpm-devel/casjay-release/raw/main/casjay.fc.repo"
   RELEASE_VER="$(cat /etc/*-release | grep 'VERSION_ID=' | awk -F '=' '{print $2}' | sed 's#"##g' | awk -F '.' '{print $1}')"
+  if [[ "$RELEASE_VER" -ge "8" ]]; then
+    RELEASE_FILE="https://github.com/rpm-devel/casjay-release/raw/main/casjay.rh8.repo"
+  elif [[ "$RELEASE_VER" -lt "8" ]]; then
+    RELEASE_FILE="https://github.com/rpm-devel/casjay-release/raw/main/casjay.rh.repo"
+  else
+    printf_red "Can not determine OS release version"
+    exit 1
+  fi
   save_remote_file "$RELEASE_FILE" "/etc/yum.repos.d/casjay.repo"
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 run_grub() {
   printf_green "Setting up grub"
+  local grub_cnf="/boot/grub/grub.cfg"
+  local grub2_cnf="/boot/grub2/grub.cfg"
   rm -Rf /boot/*rescue*
-  devnull grub2-mkconfig -o /boot/grub2/grub.cfg
+  if cmd_exists grub2-mkconfig && [[ -f "$grub2_cnf" ]]; then
+    devnull grub2-mkconfig -o "$grub2_cnf" &&
+      printf_green "Updated $grub2_cnf"
+    printf_return "Failed to update $grub2_cnf"
+  elif cmd_exists grub-mkconfig && [[ -f "$grub_cnf" ]]; then
+    devnull grub-mkconfig -o "$grub_cnf" &&
+      printf_green "Updated $grub_cnf" ||
+      printf_return "Failed to update $grub_cnf"
+  fi
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 run_post() {
@@ -135,6 +166,7 @@ if [ "$(hostname -s)" != "pbx" ]; then
   rm_repo_files
   retrieve_repo_file
 fi
+printf_green "Installer has been initialized"
 
 ##################################################################################################################
 printf_head "Disabling selinux"
@@ -152,6 +184,10 @@ if [ -f /etc/makepkg.conf ]; then
     sed -i 's/COMPRESSXZ=(xz -c -z -)/COMPRESSXZ=(xz -c -T '"$numberofcores"' -z -)/g' /etc/makepkg.conf
   fi
 fi
+##################################################################################################################
+printf_head "Grabbing ssh key from github"
+##################################################################################################################
+ssh_key
 
 ##################################################################################################################
 printf_head "Configuring the system"
