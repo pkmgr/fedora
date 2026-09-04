@@ -97,7 +97,7 @@ retrieve_version_file() { grab_remote_file "https://github.com/casjay-base/fedor
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 retrieve_repo_file() {
   local RELEASE_VER RELEASE_FILE IFS
-  RELEASE_FILE="https://github.com/rpm-devel/casjay-release/raw/main/casjay.fc.repo"
+  RELEASE_FILE="https://github.com/rpm-devel/casjay-release/raw/main/fedora.repo"
   RELEASE_VER="$(cat /etc/*-release | grep 'VERSION_ID=' | awk -F '=' '{print $2}' | sed 's#"##g' | awk -F '.' '{print $1}')"
   save_remote_file "$RELEASE_FILE" "/etc/yum.repos.d/casjay.repo"
 }

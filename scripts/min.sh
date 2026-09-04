@@ -203,9 +203,9 @@ case "${SET_HOSTNAME:-$HOSTNAME}" in
 	devel*|build*|ci*|testing*)      SYSTEM_TYPE="devel" ;;
 esac
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-SERVICES_ENABLE="cockpit cockpit.socket docker httpd munin-node nginx ntpd php-fpm postfix proftpd rsyslog snmpd sshd uptimed downtimed "
+SERVICES_ENABLE="cockpit cockpit.socket docker fail2ban httpd munin-node nginx ntpd php-fpm postfix proftpd rsyslog firewalld snmpd sshd uptimed downtimed "
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-SERVICES_DISABLE="avahi-daemon.service avahi-daemon.socket cups.path cups.service cups.socket dhcpd dhcpd6 dm-event.socket fail2ban firewalld import-state.service irqbalance.service iscsi iscsid.socket iscsiuio.socket kdump loadmodules.service lvm2-lvmetad.socket lvm2-lvmpolld.socket lvm2-monitor mdmonitor multipathd.service multipathd.socket named nfs-client.target nis-domainname.service nmb radvd rpcbind.service rpcbind.socket shorewall shorewall6 smb sssd-kcm.socket timedatex.service tuned.service udisks2.service"
+SERVICES_DISABLE="avahi-daemon.service avahi-daemon.socket cups.path cups.service cups.socket dhcpd dhcpd6 dm-event.socket import-state.service irqbalance.service iscsi iscsid.socket iscsiuio.socket kdump loadmodules.service lvm2-lvmetad.socket lvm2-lvmpolld.socket lvm2-monitor mdmonitor multipathd.service multipathd.socket named nfs-client.target nis-domainname.service nmb radvd rpcbind.service rpcbind.socket smb sssd-kcm.socket timedatex.service tuned.service udisks2.service"
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 if ! grep --no-filename -sE '^ID=|^ID_LIKE=|^NAME=' /etc/*-release | grep -qiwE "fedora"; then
 	printf_exit "This installer is meant to be run on a $SCRIPT_OS based system"
@@ -682,12 +682,12 @@ remove_pkg chrony cronie-anacron sendmail sendmail-cf esmtp
 # install_pkg cronie-noanacron  # skipped on fedora
 install_pkg postfix
 install_pkg net-tools
-install_pkg wget
+install_pkg wget1-wget
 install_pkg curl
 install_pkg git
-install_pkg mailx
+install_pkg s-nail
 install_pkg e2fsprogs
-install_pkg vim
+install_pkg vim-enhanced
 install_pkg unzip
 install_pkg bind
 install_pkg bind-utils
@@ -718,7 +718,7 @@ unset sysctl_ip4_found sysctl_ip6_found sysctlconf
 ##################################################################################################################
 printf_head "Installing the packages for $RELEASE_NAME"
 ##################################################################################################################
-install_pkg awffull
+# install_pkg awffull  # skipped on fedora
 install_pkg awstats
 install_pkg basesystem
 install_pkg bash
@@ -728,7 +728,7 @@ install_pkg certbot
 install_pkg cockpit
 install_pkg cockpit-packagekit
 install_pkg cockpit-storaged
-install_pkg cockpit-pcp
+# install_pkg cockpit-pcp  # skipped on fedora
 # install_pkg cockpit-bridge  # skipped on fedora
 # install_pkg cockpit-system  # skipped on fedora
 # install_pkg cockpit-ws  # skipped on fedora
@@ -752,11 +752,16 @@ install_pkg gcc
 install_pkg git
 install_pkg gnupg2
 install_pkg gnutls
-install_pkg grub2
+install_pkg grub2-common
+install_pkg grub2-pc-modules
+install_pkg grub2-efi-x64
+install_pkg grub2-efi-x64-modules
+install_pkg grub2-tools
 install_pkg grub2-tools-extra
+install_pkg shim-x64
 install_pkg grubby
 install_pkg gzip
-install_pkg hardlink
+install_pkg util-linux-core
 install_pkg harfbuzz
 install_pkg hdparm
 install_pkg hostname
@@ -765,20 +770,20 @@ install_pkg httpd
 install_pkg less
 install_pkg logrotate
 install_pkg lsof
-install_pkg mailx
+install_pkg s-nail
 install_pkg make
 install_pkg man-db
 install_pkg man-pages
-install_pkg mlocate
+install_pkg plocate
 install_pkg mod_fcgid
-install_pkg mod_geoip
+# install_pkg mod_geoip  # skipped on fedora
 install_pkg mod_http2
 install_pkg mod_maxminddb
 install_pkg mod_perl
 install_pkg mod_ssl
-install_pkg mod_wsgi
+install_pkg python3-mod_wsgi
 install_pkg mod_proxy_html
-install_pkg mod_proxy_uwsgi
+# install_pkg mod_proxy_uwsgi  # skipped on fedora
 install_pkg mosh
 install_pkg mrtg
 install_pkg munin
@@ -789,11 +794,10 @@ install_pkg ncurses-base
 install_pkg ncurses-libs
 install_pkg net-tools
 install_pkg nginx
-install_pkg ntp
 install_pkg oddjob-mkhomedir
 install_pkg openssh-server
 install_pkg openssl
-install_pkg passwd
+install_pkg shadow-utils
 install_pkg perl-CPAN
 install_pkg perl-CPAN-Meta
 install_pkg perl-DBD-Pg
@@ -830,11 +834,11 @@ install_pkg python3-configargparse
 install_pkg python3-cryptography
 # install_pkg python3-enum34  # skipped on fedora
 # install_pkg python3-funcsigs  # skipped on fedora
-install_pkg python3-future
+# install_pkg python3-future  # skipped on fedora
 install_pkg python3-idna
 # install_pkg python3-josepy  # skipped on fedora
 # install_pkg python3-mock  # skipped on fedora
-install_pkg python3-pynvim
+install_pkg python3-neovim
 install_pkg python3-parsedatetime
 install_pkg python3-pbr
 install_pkg python3-pip
@@ -858,14 +862,14 @@ install_pkg tar
 install_pkg tzdata
 install_pkg unzip
 install_pkg webalizer
-install_pkg wget
+install_pkg wget1-wget
 install_pkg which
 install_pkg whois
 install_pkg xz
 install_pkg xz-libs
 install_pkg dnf-utils
 install_pkg zip
-install_pkg zlib
+install_pkg zlib-ng-compat
 ##################################################################################################################
 printf_head "Installing version-specific packages"
 ##################################################################################################################
@@ -889,6 +893,7 @@ run_grub
 ##################################################################################################################
 printf_head "Installing custom web server files"
 ##################################################################################################################
+if [ "${CONFIG_SETUP:-yes}" != "no" ]; then
 [ -d "$CONFIG_TEMP_DIR" ] && devnull rm_if_exists "$CONFIG_TEMP_DIR"
 devnull git clone -q "https://github.com/casjay-base/fedora" "$CONFIG_TEMP_DIR"
 if [ -d "/var/www/html/sysinfo/.git" ]; then
@@ -1012,9 +1017,22 @@ fi
 if [ -z "$does_lo_have_ipv6" ]; then
 	sed -i 's|inet_interfaces.*|inet_interfaces = 127.0.0.1|g' $CONFIG_TEMP_DIR/etc/postfix/main.cf
 fi
-devnull rm_if_exists $CONFIG_TEMP_DIR/etc/{fail2ban,shorewall,shorewall6}
+for fwdir in fail2ban firewalld; do
+	if [ -d "/etc/$fwdir" ]; then
+		devnull rm_if_exists "$CONFIG_TEMP_DIR/etc/$fwdir"
+	fi
+done
 devnull mkdir -p /etc/rsync.d /var/log/named
 devnull rsync -avhP $CONFIG_TEMP_DIR/{etc,root,usr,var}* /
+fi
+if [ -f /etc/fail2ban/jail.local ]; then
+	if type -P mysqld >/dev/null 2>&1 || type -P mariadbd >/dev/null 2>&1; then
+		devnull sed -i '/^\[mysqld-auth\]/,/^\[/{s/^enabled = false/enabled = true/}' /etc/fail2ban/jail.local
+	fi
+	if [ -x /opt/mssql/bin/sqlservr ] || systemctl list-unit-files 2>/dev/null | grep -q '^mssql-server'; then
+		devnull sed -i '/^\[mssql-auth\]/,/^\[/{s/^enabled = false/enabled = true/}' /etc/fail2ban/jail.local
+	fi
+fi
 devnull sed -i "s#myserverdomainname#$HOSTNAME#g" /etc/sysconfig/network
 devnull sed -i "s#mydomain#$set_domainname#g" /etc/sysconfig/network
 devnull chmod 644 -Rf /etc/cron.d/* /etc/logrotate.d/*
@@ -1461,6 +1479,17 @@ if rpm -q iptables-legacy >/dev/null 2>&1 && rpm -q iptables-nft >/dev/null 2>&1
 	remove_pkg iptables-legacy
 	devnull alternatives --set iptables /usr/sbin/iptables-nft
 	devnull alternatives --set ip6tables /usr/sbin/ip6tables-nft
+fi
+##################################################################################################################
+printf_head "Installing and enabling intrusion detection/prevention"
+##################################################################################################################
+install_pkg fail2ban
+install_pkg firewalld
+install_pkg ipset
+install_pkg rkhunter
+if type -P rkhunter >/dev/null 2>&1; then
+	devnull rkhunter --propupd
+	devnull rkhunter --update
 fi
 ##################################################################################################################
 printf_head "Enabling services"
