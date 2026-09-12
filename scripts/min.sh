@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-##@Version           :  202211071239-git
+##@Version           :  202609122155-git
 # @@Author           :  Jason Hempstead
 # @@Contact          :  jason@casjaysdev.pro
 # @@License          :  WTFPL
@@ -27,7 +27,7 @@
 # shellcheck disable=SC2317
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 APPNAME="min-fedora"
-VERSION="202211071239-git"
+VERSION="202609122155-git"
 USER="${SUDO_USER:-${USER}}"
 HOME="${USER_HOME:-${HOME}}"
 CONFIG_TEMP_DIR="${TMPDIR:-/tmp}/minConfigFiles"
@@ -893,7 +893,7 @@ run_grub
 ##################################################################################################################
 printf_head "Installing custom web server files"
 ##################################################################################################################
-if [ "${CONFIG_SETUP:-yes}" != "no" ]; then
+if [ "${MIN_CONFIG_SETUP:-yes}" != "no" ]; then
 [ -d "$CONFIG_TEMP_DIR" ] && devnull rm_if_exists "$CONFIG_TEMP_DIR"
 devnull git clone -q "https://github.com/casjay-base/fedora" "$CONFIG_TEMP_DIR"
 if [ -d "/var/www/html/sysinfo/.git" ]; then
@@ -1025,13 +1025,17 @@ done
 devnull mkdir -p /etc/rsync.d /var/log/named
 devnull rsync -avhP $CONFIG_TEMP_DIR/{etc,root,usr,var}* /
 fi
-if [ -f /etc/fail2ban/jail.local ]; then
-	if type -P mysqld >/dev/null 2>&1 || type -P mariadbd >/dev/null 2>&1; then
-		devnull sed -i '/^\[mysqld-auth\]/,/^\[/{s/^enabled = false/enabled = true/}' /etc/fail2ban/jail.local
-	fi
-	if [ -x /opt/mssql/bin/sqlservr ] || systemctl list-unit-files 2>/dev/null | grep -q '^mssql-server'; then
-		devnull sed -i '/^\[mssql-auth\]/,/^\[/{s/^enabled = false/enabled = true/}' /etc/fail2ban/jail.local
-	fi
+if [ -f "/etc/fail2ban/jail.local" ]; then
+	# Every jail in jail.local is permanently enabled - min.sh only runs
+	# once, at bootstrap, so a jail could never be enabled later if it
+	# depended on detecting the service at bootstrap time. Instead we just
+	# make sure each jail's logpath exists (as an empty file, if needed) so
+	# fail2ban never errors on a missing log; once the real service is
+	# installed and starts writing to that same path, the already-running
+	# jail picks it up immediately with no further changes here.
+	devnull mkdir -p /var/log/proftpd /var/log/httpd /var/log/nginx /var/log/named /var/log/mysql /var/opt/mssql/log
+	devnull touch /var/log/proftpd/auth.log /var/log/httpd/error_log /var/log/nginx/error.log /var/log/nginx/access.log
+	devnull touch /var/log/named/security.log /var/log/mysql/mysql.log /var/opt/mssql/log/errorlog /var/log/maillog /var/log/secure
 fi
 devnull sed -i "s#myserverdomainname#$HOSTNAME#g" /etc/sysconfig/network
 devnull sed -i "s#mydomain#$set_domainname#g" /etc/sysconfig/network
