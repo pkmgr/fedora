@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-##@Version       : 202111041659-git
+##@Version       : 202609131048-git
 # @Author        : Jason Hempstead
 # @Contact       : jason@casjaysdev.pro
 # @License       : WTFPL
@@ -14,7 +14,7 @@
 # @Resource      :
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 APPNAME="$(basename "$0")"
-VERSION="202111041659-git"
+VERSION="202609131048-git"
 USER="${SUDO_USER:-${USER}}"
 HOME="${USER_HOME:-${HOME}}"
 SRC_DIR="${BASH_SOURCE%/*}"
@@ -1885,7 +1885,7 @@ rm -Rf /etc/named* /var/named/* /etc/ntp* /etc/cron*/0* /etc/cron*/dailyjobs /va
 printf_head "setting up config files"
 ##################################################################################################################
 devnull git clone -q https://github.com/phpsysinfo/phpsysinfo /var/www/html/sysinfo
-devnull git clone -q https://github.com/casjay-base/centos /tmp/configs
+devnull git clone -q https://github.com/casjay-base/rhel /tmp/configs
 devnull find /tmp/configs -type f -iname "*.sh" -exec chmod 755 {} \;
 devnull find /tmp/configs -type f -iname "*.pl" -exec chmod 755 {} \;
 devnull find /tmp/configs -type f -iname "*.cgi" -exec chmod 755 {} \;

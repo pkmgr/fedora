@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-##@Version       : 202111041659-git
+##@Version       : 202609131048-git
 # @Author        : Jason Hempstead
 # @Contact       : jason@casjaysdev.pro
 # @License       : WTFPL
@@ -14,7 +14,7 @@
 # @Resource      :
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 APPNAME="$(basename "$0")"
-VERSION="202111041659-git"
+VERSION="202609131048-git"
 USER="${SUDO_USER:-${USER}}"
 HOME="${USER_HOME:-${HOME}}"
 SRC_DIR="${BASH_SOURCE%/*}"
@@ -100,7 +100,7 @@ rm_repo_files() { printf_green "Removing files from /etc/yum.repos.d" && rm -Rf 
 run_external() { printf_green "Executing $*" && eval "$*" >/dev/null 2>&1 || return 1; }
 grab_remote_file() { urlverify "$1" && curl -q -SLs "$1" || exit 1; }
 save_remote_file() { urlverify "$1" && curl -q -SLs "$1" | tee "$2" &>/dev/null || exit 1; }
-retrieve_version_file() { grab_remote_file "https://github.com/casjay-base/centos/raw/main/version.txt" | head -n1 || echo "Unknown version"; }
+retrieve_version_file() { grab_remote_file "https://github.com/casjay-base/rhel/raw/main/version.txt" | head -n1 || echo "Unknown version"; }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 retrieve_repo_file() {
   local RELEASE_FILE IFS
@@ -227,7 +227,7 @@ rm -Rf /etc/named* /var/named/* /etc/ntp* /etc/cron*/0* /etc/cron*/dailyjobs /va
 printf_head "setting up config files"
 ##################################################################################################################
 devnull git clone -q https://github.com/phpsysinfo/phpsysinfo /var/www/html/sysinfo
-devnull git clone -q https://github.com/casjay-base/centos /tmp/configs
+devnull git clone -q https://github.com/casjay-base/rhel /tmp/configs
 devnull find /tmp/configs -type f -iname "*.sh" -exec chmod 755 {} \;
 devnull find /tmp/configs -type f -iname "*.pl" -exec chmod 755 {} \;
 devnull find /tmp/configs -type f -iname "*.cgi" -exec chmod 755 {} \;
