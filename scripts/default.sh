@@ -24,30 +24,123 @@ SCRIPT_DESCRIBE="all installations"
 if [[ "$1" == "--debug" ]]; then shift 1 && set -xo pipefail && export SCRIPT_OPTS="--debug" && export _DEBUG="on"; fi
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 # Set functions
-SCRIPTSFUNCTURL="${SCRIPTSFUNCTURL:-https://github.com/casjay-dotfiles/scripts/raw/main/functions}"
-SCRIPTSFUNCTDIR="${SCRIPTSFUNCTDIR:-/usr/local/share/CasjaysDev/scripts}"
-SCRIPTSFUNCTFILE="${SCRIPTSFUNCTFILE:-system-installer.bash}"
+GREEN="\033[0;32m"
+BG_GREEN="\[$(tput setab 2 2>/dev/null)\]"
+BG_RED="\[$(tput setab 9 2>/dev/null)\]"
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-if [ -f "../functions/$SCRIPTSFUNCTFILE" ]; then
-  . "../functions/$SCRIPTSFUNCTFILE"
-elif [ -f "$SCRIPTSFUNCTDIR/functions/$SCRIPTSFUNCTFILE" ]; then
-  . "$SCRIPTSFUNCTDIR/functions/$SCRIPTSFUNCTFILE"
-else
-  curl -LSs "$SCRIPTSFUNCTURL/$SCRIPTSFUNCTFILE" -o "/tmp/$SCRIPTSFUNCTFILE" || exit 1
-  . "/tmp/$SCRIPTSFUNCTFILE"
-fi
+# Vendored from casjay-dotfiles/scripts system-installer.bash (self-contained,
+# no network fetch) - only the functions this script actually calls.
+__printf_color() { printf "%b" "$(tput setaf "$2" 2>/dev/null)" "$1" "$(tput sgr0 2>/dev/null)"; }
+__printf_green() { __printf_color "$1\n" 2; }
+__printf_red() { __printf_color "$1\n" 208; }
+__printf_yellow() { __printf_color "$1\n" 3; }
+__printf_blue() { __printf_color "$1\n" 33; }
+__printf_info() { __printf_color "[ ℹ️ ] $1\n" 3; }
+__printf_exit() {
+  __printf_color "$1\n" 208 1>&2
+  exit 1
+}
+__printf_head() {
+  [[ $1 == ?(-)+([0-9]) ]] && local color="$1" && shift 1 || local color="6"
+  local msg="$*"
+  shift
+  __printf_color "
+##################################################
+$msg
+##################################################\n" "$color"
+}
+__printf_execute_success() { __printf_color "[ ✔ ] $1 \n" 2; }
+__printf_execute_error() { __printf_color "[ ✖ ] $1 $2 \n" 1; }
+__printf_execute_error_stream() { while read -r line; do __printf_execute_error "↳ ERROR: $line"; done; }
+__printf_execute_result() {
+  if [ "$1" -eq 0 ]; then __printf_execute_success "$2"; else __printf_execute_error "$2"; fi
+  return "$1"
+}
+__devnull() { "$@" >/dev/null 2>&1; }
+__urlcheck() { __devnull curl --output /dev/null --silent --head --fail "$1"; }
+__urlinvalid() { if [ -z "$1" ]; then __printf_red "Invalid URL\n"; else
+  __printf_red "Can't find $1\n"
+  exit 1
+fi; }
+__urlverify() { __urlcheck $1 || __urlinvalid $1; }
+__set_trap() { trap -p "$1" | grep -- "$2" &>/dev/null || trap "$2" "$1"; }
+__setexitstatus() {
+  EXIT="${EXIT:-$?}"
+  local EXITSTATUS+="$EXIT"
+  if [ -z "$EXITSTATUS" ] || [ "$EXITSTATUS" -ne 0 ]; then
+    BG_EXIT="${BG_RED}"
+    return 1
+  else
+    BG_EXIT="${BG_GREEN}"
+    return 0
+  fi
+}
+__execute() {
+  __kill_all_subprocesses() {
+    local i=""
+    for i in $(jobs -p); do
+      kill "$i"
+      wait "$i" &>/dev/null
+    done
+  }
+  __show_spinner() {
+    local -r FRAMES='/-\|'
+    local -r NUMBER_OR_FRAMES=${#FRAMES}
+    local -r CMDS="$2"
+    local -r MSG="$3"
+    local -r PID="$1"
+    local i=0
+    local frameText=""
+    if [ "$TRAVIS" != "true" ]; then
+      printf "\n\n\n"
+      tput cuu 3
+      tput sc
+    fi
+    while kill -0 "$PID" &>/dev/null; do
+      frameText="[ ${FRAMES:i++%NUMBER_OR_FRAMES:1} ] $MSG"
+      if [ "$TRAVIS" != "true" ]; then
+        printf "%s\n" "$frameText"
+      else
+        printf "%s" "$frameText"
+      fi
+      sleep 0.2
+      if [ "$TRAVIS" != "true" ]; then
+        tput rc
+      else
+        printf "\r"
+      fi
+    done
+  }
+  local -r CMDS="$1"
+  local -r MSG="${2:-$1}"
+  local -r TMP_FILE="$(mktemp /tmp/XXXXX)"
+  local exitCode=0
+  local cmdsPID=""
+  __set_trap "EXIT" "__kill_all_subprocesses"
+  eval "$CMDS" >/dev/null 2>"$TMP_FILE" &
+  cmdsPID=$!
+  __show_spinner "$cmdsPID" "$CMDS" "$MSG"
+  wait "$cmdsPID" &>/dev/null
+  exitCode=$?
+  __printf_execute_result $exitCode "$MSG"
+  if [ $exitCode -ne 0 ]; then
+    __printf_execute_error_stream <"$TMP_FILE"
+  fi
+  rm -rf "$TMP_FILE"
+  return $exitCode
+}
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-[[ "$1" == "--help" ]] && printf_exit "${GREEN}apache installer for Fedora"
-cat /etc/*-release | grep 'ID_LIKE=' | grep -E 'rhel|centos' &>/dev/null && true || printf_exit "This installer is meant to be run on a CentOS based system"
+[[ "$1" == "--help" ]] && __printf_exit "${GREEN}apache installer for Fedora"
+cat /etc/*-release | grep -- 'ID_LIKE=' | grep -E -- 'rhel|centos' &>/dev/null && true || __printf_exit "This installer is meant to be run on a CentOS based system"
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-system_service_exists() { systemctl status "$1" 2>&1 | grep -iq "$1" && return 0 || return 1; }
-system_service_enable() { systemctl status "$1" 2>&1 | grep -iq 'inactive' && execute "systemctl enable $1" "Enabling service: $1" || return 1; }
-system_service_disable() { systemctl status "$1" 2>&1 | grep -iq 'active' && execute "systemctl disable --now $1" "Disabling service: $1" || return 1; }
+system_service_exists() { systemctl status "$1" 2>&1 | grep -iq -- "$1" && return 0 || return 1; }
+system_service_enable() { systemctl status "$1" 2>&1 | grep -iq -- 'inactive' && __execute "systemctl enable $1" "Enabling service: $1" || return 1; }
+system_service_disable() { systemctl status "$1" 2>&1 | grep -iq -- 'active' && __execute "systemctl disable --now $1" "Disabling service: $1" || return 1; }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 test_pkg() {
   for pkg in "$@"; do
     if rpm -q "$pkg" &>/dev/null; then
-      printf_blue "[ ✔ ] $pkg is already installed"
+      __printf_blue "[ ✔ ] $pkg is already installed"
       return 1
     else
       return 0
@@ -56,12 +149,12 @@ test_pkg() {
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 remove_pkg() {
-  test_pkg "$*" &>/dev/null || execute "yum remove -q -y $*" "Removing: $*"
+  test_pkg "$*" &>/dev/null || __execute "yum remove -q -y $*" "Removing: $*"
   test_pkg "$*" &>/dev/null || return 0
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 install_pkg() {
-  test_pkg "$*" && if execute "yum install -q -y --skip-broken $*" "Installing: $*"; then
+  test_pkg "$*" && if __execute "yum install -q -y --skip-broken $*" "Installing: $*"; then
     return 0
   else
     return 1
@@ -75,50 +168,50 @@ detect_selinux() {
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 disable_selinux() {
   if selinuxenabled; then
-    printf_blue "Disabling selinux"
-    devnull setenforce 0
+    __printf_blue "Disabling selinux"
+    __devnull setenforce 0
   else
-    printf_green "selinux is already disabled"
+    __printf_green "selinux is already disabled"
   fi
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-rm_repo_files() { printf_green "Removing files from /etc/yum.repos.d" && rm -Rf /etc/yum.repos.d/*; }
-run_external() { printf_green "Executing $*" && eval "$*" >/dev/null 2>&1 || return 1; }
-grab_remote_file() { urlverify "$1" && curl -q -SLs "$1" || exit 1; }
-save_remote_file() { urlverify "$1" && curl -q -SLs "$1" | tee "$2" &>/dev/null || exit 1; }
+rm_repo_files() { __printf_green "Removing files from /etc/yum.repos.d" && rm -Rf /etc/yum.repos.d/*; }
+run_external() { __printf_green "Executing $*" && eval "$*" >/dev/null 2>&1 || return 1; }
+grab_remote_file() { __urlverify "$1" && curl -q -SLs "$1" || exit 1; }
+save_remote_file() { __urlverify "$1" && curl -q -SLs "$1" | tee "$2" &>/dev/null || exit 1; }
 retrieve_version_file() { grab_remote_file "https://github.com/casjay-base/fedora/raw/main/version.txt" | head -n1 || echo "Unknown version"; }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 retrieve_repo_file() {
   local RELEASE_VER RELEASE_FILE IFS
   RELEASE_FILE="https://github.com/rpm-devel/casjay-release/raw/main/fedora.repo"
-  RELEASE_VER="$(cat /etc/*-release | grep 'VERSION_ID=' | awk -F '=' '{print $2}' | sed 's#"##g' | awk -F '.' '{print $1}')"
+  RELEASE_VER="$(cat /etc/*-release | grep -- 'VERSION_ID=' | awk -F '=' '{print $2}' | sed 's#"##g' | awk -F '.' '{print $1}')"
   save_remote_file "$RELEASE_FILE" "/etc/yum.repos.d/casjay.repo"
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 run_grub() {
-  printf_green "Setting up grub"
+  __printf_green "Setting up grub"
   rm -Rf /boot/*rescue*
-  devnull grub2-mkconfig -o /boot/grub2/grub.cfg
+  __devnull grub2-mkconfig -o /boot/grub2/grub.cfg
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 run_post() {
   local e="$*"
-  local m="${e//devnull /}"
-  execute "$e" "executing: $m"
-  setexitstatus
+  local m="${e//__devnull /}"
+  __execute "$e" "executing: $m"
+  __setexitstatus
   set --
 }
 ##################################################################################################################
 clear
 ARGS="$*" && shift $#
 ##################################################################################################################
-printf_head "Initializing the installer"
+__printf_head "Initializing the installer"
 ##################################################################################################################
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 if [ -f /etc/casjaysdev/updates/versions/default.txt ]; then
-  printf_red "This has already been installed"
-  printf_red "To reinstall please remove the version file in"
-  printf_exit "/etc/casjaysdev/updates/versions/default.txt"
+  __printf_red "This has already been installed"
+  __printf_red "To reinstall please remove the version file in"
+  __printf_exit "/etc/casjaysdev/updates/versions/default.txt"
 fi
 if ! builtin type -P systemmgr &>/dev/null; then
   if [[ -d "/usr/local/share/CasjaysDev/scripts" ]]; then
@@ -137,15 +230,15 @@ if [ "$(hostname -s)" != "pbx" ]; then
 fi
 
 ##################################################################################################################
-printf_head "Disabling selinux"
+__printf_head "Disabling selinux"
 ##################################################################################################################
 disable_selinux
 
 ##################################################################################################################
-printf_head "Configuring cores for compiling"
+__printf_head "Configuring cores for compiling"
 ##################################################################################################################
 numberofcores=$(grep -c ^processor /proc/cpuinfo)
-printf_yellow "Total cores avaliable: $numberofcores"
+__printf_yellow "Total cores avaliable: $numberofcores"
 if [ -f /etc/makepkg.conf ]; then
   if [ $numberofcores -gt 1 ]; then
     sed -i 's/#MAKEFLAGS="-j2"/MAKEFLAGS="-j'$(($numberofcores + 1))'"/g' /etc/makepkg.conf
@@ -154,7 +247,7 @@ if [ -f /etc/makepkg.conf ]; then
 fi
 
 ##################################################################################################################
-printf_head "Configuring the system"
+__printf_head "Configuring the system"
 ##################################################################################################################
 run_external yum clean all
 run_external yum update -q -y --skip-broken
@@ -185,7 +278,7 @@ run_external yum update -q -y --skip-broken
 run_grub
 
 ##################################################################################################################
-printf_head "Installing the packages for $SCRIPT_DESCRIBE"
+__printf_head "Installing the packages for $SCRIPT_DESCRIBE"
 ##################################################################################################################
 install_pkg apr
 install_pkg apr-util
@@ -862,41 +955,41 @@ install_pkg zip
 install_pkg zlib
 
 ##################################################################################################################
-printf_head "Fixing packages"
+__printf_head "Fixing packages"
 ##################################################################################################################
 run_grub
 rm -Rf /etc/named* /var/named/* /etc/ntp* /etc/cron*/0* /etc/cron*/dailyjobs /var/ftp/uploads /etc/httpd/conf.d/ssl.conf /tmp/configs
 
 ##################################################################################################################
-printf_head "setting up config files"
+__printf_head "setting up config files"
 ##################################################################################################################
-devnull git clone -q https://github.com/phpsysinfo/phpsysinfo /var/www/html/sysinfo
-devnull git clone -q https://github.com/casjay-base/fedora /tmp/configs
-devnull find /tmp/configs -type f -iname "*.sh" -exec chmod 755 {} \;
-devnull find /tmp/configs -type f -iname "*.pl" -exec chmod 755 {} \;
-devnull find /tmp/configs -type f -iname "*.cgi" -exec chmod 755 {} \;
-devnull find /tmp/configs -type f -exec sed -i "s#myserverhostname#$(hostname -f)#g" {} \;
-devnull find /tmp/configs -type f -exec sed -i "s#myserverdomainname#$(hostname -f)#g" {} \;
-devnull find /tmp/configs -type f -exec sed -i "s#myhostnameshort#$(hostname -s)#g" {} \;
-devnull find /tmp/configs -type f -exec sed -i "s#mydomainname#$(hostname -f | awk -F. '{$1="";OFS="." ; print $0}' | sed 's/^.//')#g" {} \;
-#devnull rm -Rf /tmp/configs/etc/{fail2ban,shorewall,shorewall6}
-devnull cp -Rf /tmp/configs/{etc,root,usr,var}* /
-devnull mkdir -p /etc/rsync.d /var/log/named &&
-  devnull chown -Rf named:named /etc/named* /var/named /var/log/named
-devnull chown -Rf apache:apache /var/www /usr/local/share/httpd
-devnull sed -i "s#myserverdomainname#$(echo $HOSTNAME)#g" /etc/sysconfig/network
-devnull sed -i "s#mydomain#$(echo $HOSTNAME | awk -F. '{$1="";OFS="." ; print $0}' | sed 's/^.//')#g" /etc/sysconfig/network
-devnull domainname $(hostname -f | awk -F. '{$1="";OFS="." ; print $0}' | sed 's/^.//') &&
+__devnull git clone -q https://github.com/phpsysinfo/phpsysinfo /var/www/html/sysinfo
+__devnull git clone -q https://github.com/casjay-base/fedora /tmp/configs
+__devnull find /tmp/configs -type f -iname "*.sh" -exec chmod 755 {} \;
+__devnull find /tmp/configs -type f -iname "*.pl" -exec chmod 755 {} \;
+__devnull find /tmp/configs -type f -iname "*.cgi" -exec chmod 755 {} \;
+__devnull find /tmp/configs -type f -exec sed -i "s#myserverhostname#$(hostname -f)#g" {} \;
+__devnull find /tmp/configs -type f -exec sed -i "s#myserverdomainname#$(hostname -f)#g" {} \;
+__devnull find /tmp/configs -type f -exec sed -i "s#myhostnameshort#$(hostname -s)#g" {} \;
+__devnull find /tmp/configs -type f -exec sed -i "s#mydomainname#$(hostname -f | awk -F. '{$1="";OFS="." ; print $0}' | sed 's/^.//')#g" {} \;
+#__devnull rm -Rf /tmp/configs/etc/{fail2ban,shorewall,shorewall6}
+__devnull cp -Rf /tmp/configs/{etc,root,usr,var}* /
+__devnull mkdir -p /etc/rsync.d /var/log/named &&
+  __devnull chown -Rf named:named /etc/named* /var/named /var/log/named
+__devnull chown -Rf apache:apache /var/www /usr/local/share/httpd
+__devnull sed -i "s#myserverdomainname#$(echo $HOSTNAME)#g" /etc/sysconfig/network
+__devnull sed -i "s#mydomain#$(echo $HOSTNAME | awk -F. '{$1="";OFS="." ; print $0}' | sed 's/^.//')#g" /etc/sysconfig/network
+__devnull domainname $(hostname -f | awk -F. '{$1="";OFS="." ; print $0}' | sed 's/^.//') &&
   echo "kernel.domainname=$(domainname)" >>/etc/sysctl.conf
-devnull chmod 644 -Rf /etc/cron.d/* /etc/logrotate.d/*
-devnull touch /etc/postfix/mydomains.pcre
-devnull chattr +i /etc/resolv.conf
-if devnull postmap /etc/postfix/transport /etc/postfix/canonical /etc/postfix/virtual /etc/postfix/mydomains; then
+__devnull chmod 644 -Rf /etc/cron.d/* /etc/logrotate.d/*
+__devnull touch /etc/postfix/mydomains.pcre
+__devnull chattr +i /etc/resolv.conf
+if __devnull postmap /etc/postfix/transport /etc/postfix/canonical /etc/postfix/virtual /etc/postfix/mydomains; then
   newaliases &>/dev/null || newaliases.postfix -I &>/dev/null
 fi
 
 ##################################################################################################################
-printf_head "Disabling services"
+__printf_head "Disabling services"
 ##################################################################################################################
 system_service_disable firewalld
 system_service_disable chrony
@@ -916,7 +1009,7 @@ system_service_disable dhcpd6
 system_service_disable radvd
 
 ##################################################################################################################
-printf_head "Enabling services"
+__printf_head "Enabling services"
 ##################################################################################################################
 system_service_enable sshd
 system_service_enable tor
@@ -933,7 +1026,7 @@ system_service_enable cockpit.socket
 system_service_enable named
 
 ##################################################################################################################
-printf_head "Cleaning up"
+__printf_head "Cleaning up"
 ##################################################################################################################
 system_service_enable httpd
 system_service_enable nginx
@@ -972,14 +1065,14 @@ chown -Rf apache:apache /var/www
 history -c && history -w
 
 ##################################################################################################################
-printf_info "Installer version: $(retrieve_version_file)"
+__printf_info "Installer version: $(retrieve_version_file)"
 ##################################################################################################################
 mkdir -p /etc/casjaysdev/updates/versions
 echo "$VERSION" >/etc/casjaysdev/updates/versions/configs.txt
 chmod -Rf 664 /etc/casjaysdev/updates/versions/configs.txt
 
 ##################################################################################################################
-printf_head "Finished "
+__printf_head "Finished "
 echo ""
 ##################################################################################################################
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
