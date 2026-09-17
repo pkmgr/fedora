@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-##@Version           :  202609122155-git
+##@Version           :  202609131048-git
 # @@Author           :  Jason Hempstead
 # @@Contact          :  jason@casjaysdev.pro
 # @@License          :  WTFPL
@@ -27,15 +27,16 @@
 # shellcheck disable=SC2317
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 APPNAME="min-fedora"
-VERSION="202609122155-git"
+VERSION="202609131048-git"
 USER="${SUDO_USER:-${USER}}"
-HOME="${PKMGR_USER_HOME:-${HOME}}"
+HOME="${USER_HOME:-${HOME}}"
 CONFIG_TEMP_DIR="${TMPDIR:-/tmp}/minConfigFiles"
 PKMGR_FORCE_INSTALL="${PKMGR_FORCE_INSTALL:-no}"
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 # Set bash options
 if [ "$1" = "--debug" ]; then shift 1 && set -xo pipefail && export SCRIPT_OPTS="--debug" && export _DEBUG="on"; fi
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+clear
 if [ ! -d "/etc/casjaysdev" ]; then
 	if dnf makecache && dnf update -y; then
 		echo "Rebooting your system: Please rerun this script after reboot"
@@ -52,106 +53,6 @@ for pkg in sudo git curl wget; do
 	command -v $pkg &>/dev/null || { echo "Installing $pkg" && dnf install -y -q $pkg &>/dev/null || exit 1; } || { echo "Failed to install $pkg" && exit 1; }
 done
 unset pkg
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-read -r -t 30 -p "Enter your full hostname: (default: $HOSTNAME) " set_hostname
-set_hostname="${set_hostname:-$(hostname -f 2>/dev/null)}"
-set_hostname="${set_hostname:-$HOSTNAME}"
-if [ -n "$set_hostname" ]; then
-	if hostnamectl set-hostname "$set_hostname" && echo "$set_hostname" >/etc/hostname; then
-		type -P hostname >/dev/null 2>&1 && hostname -F /etc/hostname
-	fi
-	MY_HOST_NAME="$set_hostname"
-	unset set_hostname
-fi
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-if type -P systemd-ask-password >/dev/null 2>&1; then
-	sap_args=("--timeout=30")
-	systemd-ask-password --help 2>&1 | grep -q -- '--emoji' && sap_args+=("--emoji=no")
-	systemd-ask-password --help 2>&1 | grep -q -- '--echo' && sap_args+=("--echo=masked")
-	root_pass_1="$(systemd-ask-password "${sap_args[@]}" "Enter your root password: ")"
-	root_pass_2="$(systemd-ask-password "${sap_args[@]}" "Confirm your root password: ")"
-	unset sap_args
-else
-	stty -echo
-	printf "Enter your root password: " && read -r -t 30 -s root_pass_1
-	printf '\n'
-	printf "Confirm your root password: " && read -r -t 30 -s root_pass_2
-	printf '\n'
-	stty echo
-fi
-if [ -n "$root_pass_1" ]; then
-	if [ "$root_pass_1" = "$root_pass_2" ]; then
-		echo "$root_pass_1" | passwd --stdin root >/dev/null
-	fi
-fi
-unset root_pass_1 root_pass_2
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-if [ -z "$(find /var/cache/swaps -mindepth 1 2>/dev/null)" ]; then
-	SWAP_SIZE="$(swapon --show=SIZE --noheadings 2>/dev/null | awk 'NR==1{gsub(/[0-9.]/,""); gsub(/ /,""); print}')"
-	if [ "$SWAP_SIZE" != "G" ]; then
-		swap_file="swapFile"
-		swap_dir="/var/cache/swaps"
-		mkdir -p "$swap_dir"
-
-		# Detect RAM (KB) and pad 5% to absorb kernel/firmware reservations
-		# (e.g. a 96 GB host that `free` reports as ~93 GB)
-		mem_kb="$(free | awk 'NR==2 {print $2}')"
-		mem_kb="${mem_kb:-1024}"
-		mem_kb_padded=$((mem_kb * 105 / 100))
-		mem_gb=$(((mem_kb_padded + 1048575) / 1048576))
-
-		# Free disk at swap location, in GB
-		disk_avail_kb="$(df -Pk "$swap_dir" | awk 'NR==2 {print $4}')"
-		disk_avail_gb=$((disk_avail_kb / 1048576))
-
-		# Tiered swap size in MB
-		if [ "$mem_gb" -le 2 ]; then
-			swap_file_size=$((mem_gb * 2 * 1024))
-		elif [ "$mem_gb" -le 4 ]; then
-			swap_file_size=$((mem_gb * 1024))
-		elif [ "$mem_gb" -le 8 ]; then
-			swap_file_size=$((4 * 1024))
-		else
-			if [ "$disk_avail_gb" -gt 100 ]; then
-				swap_file_size=$((16 * 1024))
-			elif [ "$disk_avail_gb" -gt 50 ]; then
-				swap_file_size=$((8 * 1024))
-			else
-				swap_file_size=$((4 * 1024))
-			fi
-		fi
-
-		# Cap at 50% of free disk; skip if cap drops below 2 GB
-		max_swap_mb=$((disk_avail_kb / 1024 / 2))
-		[ "$swap_file_size" -gt "$max_swap_mb" ] && swap_file_size=$max_swap_mb
-		[ "$swap_file_size" -lt 2048 ] && swap_file_size=0
-
-		if [ "$swap_file_size" -gt 0 ] && [ ! -f "$swap_dir/$swap_file" ]; then
-			echo "RAM: ${mem_gb}GB, free disk at $swap_dir: ${disk_avail_gb}GB"
-			echo "Setting up ${swap_file_size}MB swap in $swap_dir/$swap_file"
-			echo "This may take a few minutes so enjoy your coffee"
-			if dd if=/dev/zero of=$swap_dir/$swap_file bs=1MB count=$swap_file_size &>/dev/null; then
-				echo "swap size is: ${swap_file_size}MB"
-				chmod 600 $swap_dir/$swap_file
-				mkswap $swap_dir/$swap_file >/dev/null
-				swapon $swap_dir/$swap_file >/dev/null
-				if ! grep -qs -- "$swap_dir/$swap_file" /etc/fstab; then
-					echo "$swap_dir/$swap_file          swap        swap             defaults          0 0" | tee -a /etc/fstab >/dev/null
-				fi
-			fi
-		fi
-		unset SWAP_SIZE swap_file_size swap_file swap_dir mem_kb mem_kb_padded mem_gb disk_avail_kb disk_avail_gb max_swap_mb
-		swapon --show 2>/dev/null | grep -v -- '^NAME ' | grep -q -- '^' && echo "Swap has been enabled"
-		sleep 5
-	fi
-fi
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-if [ ! -d "/usr/local/share/CasjaysDev/scripts" ]; then
-	git clone "https://github.com/casjay-dotfiles/scripts" "/usr/local/share/CasjaysDev/scripts" -q
-	eval "/usr/local/share/CasjaysDev/scripts/install.sh" || { echo "Failed to initialize" && exit 1; }
-	export PATH="/usr/local/share/CasjaysDev/scripts/bin:$PATH"
-	sleep 5
-fi
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 # Vendored from casjay-dotfiles/scripts system-installer.bash (self-contained,
 # no network fetch) - only the functions this script actually calls.
@@ -183,7 +84,6 @@ __printf_return() {
 	[ ${#msg} = 0 ] || { __printf_color "$msg" "$color" 1>&2 && printf "\n"; }
 	return ${exitCode:-2}
 }
-__devnull() { "$@" >/dev/null 2>&1; }
 __urlcheck() { __devnull curl --output /dev/null --silent --head --fail "$1"; }
 __urlinvalid() {
 	if [ -z "$1" ]; then
@@ -261,20 +161,129 @@ __execute() {
 	return $exitCode
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-SCRIPT_OS="Fedora"
+read -r -t 30 -p "Enter your full hostname: (default: $HOSTNAME) " set_hostname
+set_hostname="${set_hostname:-$(hostname -f 2>/dev/null)}"
+set_hostname="${set_hostname:-$HOSTNAME}"
+if [ -n "$set_hostname" ]; then
+	if hostnamectl set-hostname "$set_hostname" && echo "$set_hostname" >/etc/hostname; then
+		type -P hostname >/dev/null 2>&1 && hostname -F /etc/hostname
+	fi
+	MY_HOST_NAME="$set_hostname"
+	unset set_hostname
+fi
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+if type -P systemd-ask-password >/dev/null 2>&1; then
+	sap_args=("--timeout=30")
+	systemd-ask-password --help 2>&1 | grep -q -- '--emoji' && sap_args+=("--emoji=no")
+	systemd-ask-password --help 2>&1 | grep -q -- '--echo' && sap_args+=("--echo=masked")
+	root_pass_1="$(systemd-ask-password "${sap_args[@]}" "Enter your root password: ")"
+	root_pass_2="$(systemd-ask-password "${sap_args[@]}" "Confirm your root password: ")"
+	unset sap_args
+else
+	stty -echo
+	printf "Enter your root password: " && read -r -t 30 -s root_pass_1
+	printf '\n'
+	printf "Confirm your root password: " && read -r -t 30 -s root_pass_2
+	printf '\n'
+	stty echo
+fi
+if [ -n "$root_pass_1" ]; then
+	if [ "$root_pass_1" = "$root_pass_2" ]; then
+		echo "$root_pass_1" | passwd --stdin root >/dev/null
+	fi
+fi
+unset root_pass_1 root_pass_2
+__printf_blue "System setup completed continuing setup" && sleep 3 && clear
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+if [ -z "$(find /var/cache/swaps -mindepth 1 2>/dev/null)" ]; then
+	SWAP_SIZE="$(swapon --show=SIZE --noheadings 2>/dev/null | awk 'NR==1{gsub(/[0-9.]/,""); gsub(/ /,""); print}')"
+	if [ "$SWAP_SIZE" != "G" ]; then
+		swap_file="swapFile"
+		swap_dir="/var/cache/swaps"
+		mkdir -p "$swap_dir"
+
+		# Detect RAM (KB) and pad 5% to absorb kernel/firmware reservations
+		# (e.g. a 96 GB host that `free` reports as ~93 GB)
+		mem_kb="$(free | awk 'NR==2 {print $2}')"
+		mem_kb="${mem_kb:-1024}"
+		mem_kb_padded=$((mem_kb * 105 / 100))
+		mem_gb=$(((mem_kb_padded + 1048575) / 1048576))
+
+		# Free disk at swap location, in GB
+		disk_avail_kb="$(df -Pk "$swap_dir" | awk 'NR==2 {print $4}')"
+		disk_avail_gb=$((disk_avail_kb / 1048576))
+
+		# Tiered swap size in MB
+		if [ "$mem_gb" -le 2 ]; then
+			swap_file_size=$((mem_gb * 2 * 1024))
+		elif [ "$mem_gb" -le 4 ]; then
+			swap_file_size=$((mem_gb * 1024))
+		elif [ "$mem_gb" -le 8 ]; then
+			swap_file_size=$((4 * 1024))
+		else
+			if [ "$disk_avail_gb" -gt 100 ]; then
+				swap_file_size=$((16 * 1024))
+			elif [ "$disk_avail_gb" -gt 50 ]; then
+				swap_file_size=$((8 * 1024))
+			else
+				swap_file_size=$((4 * 1024))
+			fi
+		fi
+
+		# Cap at 50% of free disk; skip if cap drops below 2 GB
+		max_swap_mb=$((disk_avail_kb / 1024 / 2))
+		[ "$swap_file_size" -gt "$max_swap_mb" ] && swap_file_size=$max_swap_mb
+		[ "$swap_file_size" -lt 2048 ] && swap_file_size=0
+
+		if [ "$swap_file_size" -gt 0 ] && [ ! -f "$swap_dir/$swap_file" ]; then
+			echo "RAM: ${mem_gb}GB, free disk at $swap_dir: ${disk_avail_gb}GB"
+			echo "Setting up ${swap_file_size}MB swap in $swap_dir/$swap_file"
+			echo "This may take a few minutes so enjoy your coffee"
+			if dd if=/dev/zero of=$swap_dir/$swap_file bs=1MB count=$swap_file_size &>/dev/null; then
+				echo "swap size is: ${swap_file_size}MB"
+				chmod 600 $swap_dir/$swap_file
+				mkswap $swap_dir/$swap_file >/dev/null
+				swapon $swap_dir/$swap_file >/dev/null
+				if ! grep -qs -- "$swap_dir/$swap_file" /etc/fstab; then
+					echo "$swap_dir/$swap_file          swap        swap             defaults          0 0" | tee -a /etc/fstab >/dev/null
+				fi
+			fi
+		fi
+		unset SWAP_SIZE swap_file_size swap_file swap_dir mem_kb mem_kb_padded mem_gb disk_avail_kb disk_avail_gb max_swap_mb
+		swapon --show 2>/dev/null | grep -v -- '^NAME ' | grep -q -- '^' && echo "Swap has been enabled"
+		sleep 5
+	fi
+fi
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+if [ ! -d "/usr/local/share/CasjaysDev/scripts" ]; then
+	git clone "https://github.com/casjay-dotfiles/scripts" "/usr/local/share/CasjaysDev/scripts" -q
+	eval "/usr/local/share/CasjaysDev/scripts/install.sh" || { echo "Failed to initialize" && exit 1; }
+	export PATH="/usr/local/share/CasjaysDev/scripts/bin:$PATH"
+	sleep 5
+fi
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+SCRIPT_OS="RHEL/AlmaLinux/Rocky/Oracle/CentOS"
 SCRIPT_DESCRIBE="Minimal"
 PKMGR_GITHUB_USER="${PKMGR_GITHUB_USER:-casjay}"
 SYSTEMMGR_CONFIGS="cron ssh ssl"
 DFMGR_CONFIGS="misc vim bash git tmux"
-PKMGR_SET_HOSTNAME=""
-command -v hostname >/dev/null 2>&1 && PKMGR_SET_HOSTNAME="$(hostname -s 2>/dev/null)"
-PKMGR_SET_HOSTNAME="${PKMGR_SET_HOSTNAME:-${MY_HOST_NAME%%.*}}"
+SET_HOSTNAME=""
+command -v hostname >/dev/null 2>&1 && SET_HOSTNAME="$(hostname -s 2>/dev/null)"
+SET_HOSTNAME="${SET_HOSTNAME:-${MY_HOST_NAME%%.*}}"
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 SCRIPT_NAME="$APPNAME"
 SCRIPT_NAME="${SCRIPT_NAME%.*}"
 RELEASE_VER="$(. /etc/os-release 2>/dev/null; echo "${VERSION_ID%%.*}")"
 RELEASE_NAME="$(. /etc/os-release 2>/dev/null; n="${NAME,,}"; echo "${n%% *}")"
-RELEASE_TYPE="$(. /etc/os-release 2>/dev/null; [[ " $ID_LIKE " == *centos* ]] && echo "fedora")"
+RELEASE_ID="$(. /etc/os-release 2>/dev/null; echo "${ID,,}")"
+RELEASE_TYPE="$(
+	. /etc/os-release 2>/dev/null
+	i="${ID,,}"
+	l=" ${ID_LIKE,,} "
+	if [ "$i" = "rhel" ] || [ "$i" = "fedora" ] || [ "$i" = "ol" ] || [[ "$l" == *" rhel "* ]] || [[ "$l" == *" centos "* ]]; then
+		echo "fedora"
+	fi
+)"
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 PKMGR_DEFAULT_KERNEL="${PKMGR_DEFAULT_KERNEL:-kernel-ml}"
 ARCH="$(uname -m | tr '[:upper:]' '[:lower:]')"
@@ -287,7 +296,7 @@ PKMGR_SETUP_ACCOUNT_USERS="${PKMGR_SETUP_ACCOUNT_USERS:-}"
 PKMGR_SETUP_ACCOUNT_BASE_UID="${PKMGR_SETUP_ACCOUNT_BASE_UID:-10000}"
 declare -a SETUP_ACCOUNT_CREDS=()
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-case "${PKMGR_SET_HOSTNAME:-$HOSTNAME}" in
+case "${SET_HOSTNAME:-$HOSTNAME}" in
 	pbx*)                            SYSTEM_TYPE="pbx" ;;
 	dns*)                            SYSTEM_TYPE="dns" ;;
 	vpn*)                            SYSTEM_TYPE="vpn" ;;
@@ -297,25 +306,22 @@ case "${PKMGR_SET_HOSTNAME:-$HOSTNAME}" in
 	devel*|build*|ci*|testing*)      SYSTEM_TYPE="devel" ;;
 esac
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-SERVICES_ENABLE="cockpit cockpit.socket docker fail2ban httpd munin-node nginx ntpd php-fpm postfix proftpd rsyslog firewalld snmpd sshd uptimed downtimed "
+SERVICES_ENABLE="cockpit cockpit.socket docker httpd munin-node nginx ntpd php-fpm postfix proftpd rsyslog snmpd sshd uptimed downtimed "
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-SERVICES_DISABLE="avahi-daemon.service avahi-daemon.socket cups.path cups.service cups.socket \
-dhcpd dhcpd6 dm-event.socket import-state.service irqbalance.service iscsi iscsid.socket \
-iscsiuio.socket kdump loadmodules.service lvm2-lvmetad.socket lvm2-lvmpolld.socket lvm2-monitor \
-mdmonitor multipathd.service multipathd.socket named nfs-client.target nis-domainname.service nmb \
-radvd rpcbind.service rpcbind.socket smb sssd-kcm.socket timedatex.service tuned.service udisks2.service"
+SERVICES_DISABLE="avahi-daemon.service avahi-daemon.socket cups.path cups.service cups.socket dhcpd dhcpd6 dm-event.socket fail2ban firewalld import-state.service irqbalance.service iscsi iscsid.socket iscsiuio.socket kdump loadmodules.service lvm2-lvmetad.socket lvm2-lvmpolld.socket lvm2-monitor mdmonitor multipathd.service multipathd.socket named nfs-client.target nis-domainname.service nmb radvd rpcbind.service rpcbind.socket shorewall shorewall6 smb sssd-kcm.socket timedatex.service tuned.service udisks2.service"
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-if ! grep --no-filename -sE -- '^ID=|^ID_LIKE=|^NAME=' /etc/*-release | grep -qiwE -- "fedora"; then
+if [ "$RELEASE_TYPE" != "rhel" ]; then
 	__printf_exit "This installer is meant to be run on a $SCRIPT_OS based system"
 fi
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 [ "$1" == "--help" ] && __printf_exit "${GREEN}${SCRIPT_DESCRIBE} installer for $SCRIPT_OS${NC}"
+__devnull() { "$@" >/dev/null 2>&1; }
 __port_in_use() { netstatg 2>&1 | awk '{print $4}' | grep -- ':[0-9]' | awk -F':' '{print $2}' | grep -- '[0-9]' | grep -q -- "^$1$" || return 2; }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 __system_service_exists() { systemctl status "$1" 2>&1 | grep -- 'Loaded:' | grep -iq -- "$1" && return 0 || return 1; }
 __system_service_active() { (systemctl is-enabled "$1" || systemctl is-active "$1") | grep -qiE -- 'enabled|active' || return 1; }
-system_service_enable() { systemctl is-enabled --quiet "$1" 2>/dev/null || __execute "systemctl enable --now $1" "Enabling service: $1" || return 1; }
-system_service_disable() { systemctl is-active --quiet "$1" && __execute "systemctl disable --now $1" "Disabling service: $1" || return 1; }
+__system_service_enable() { systemctl is-enabled --quiet "$1" 2>/dev/null || __execute "systemctl enable --now $1" "Enabling service: $1" || return 1; }
+__system_service_disable() { systemctl is-active --quiet "$1" && __execute "systemctl disable --now $1" "Disabling service: $1" || return 1; }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 __does_user_exist() { grep -qs -- "^$1:" "/etc/passwd" || return 1; }
 __does_group_exist() { grep -qs -- "^$1:" "/etc/group" || return 1; }
@@ -337,15 +343,42 @@ __get_www_group() {
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 __copy_ca_certs() {
+	local ssl_cn="" ssl_key="/etc/ssl/CA/CasjaysDev/private/localhost.key" ssl_crt="/etc/ssl/CA/CasjaysDev/certs/localhost.crt"
 	if [ ! -d "/etc/letsencrypt/live/domain" ] || [ ! -L "/etc/letsencrypt/live/domain" ]; then
 		__printf_red "letsencrypt seemed to have failed: Installing self-signed certificates"
-		mkdir -p "/etc/letsencrypt/live/domain"
-		[ -f "/etc/ssl/CA/CasjaysDev/certs/ca.crt" ] && cp -Rf "/etc/ssl/CA/CasjaysDev/certs/ca.crt" "/etc/letsencrypt/live/domain/cert.pem"
-		[ -f "/etc/ssl/CA/CasjaysDev/certs/localhost.crt" ] && cp -Rf "/etc/ssl/CA/CasjaysDev/certs/localhost.crt" "/etc/letsencrypt/live/domain/chain.pem"
-		[ -f "/etc/ssl/CA/CasjaysDev/certs/localhost.crt" ] && cp -Rf "/etc/ssl/CA/CasjaysDev/certs/localhost.crt" "/etc/letsencrypt/live/domain/fullchain.pem"
-		[ -f "/etc/ssl/CA/CasjaysDev/private/localhost.key" ] && cp -Rf "/etc/ssl/CA/CasjaysDev/private/localhost.key" "/etc/letsencrypt/live/domain/privkey.pem"
-		find "/etc/letsencrypt" -type f -exec chmod 664 {} \;
+		mkdir -p "/etc/letsencrypt/live/domain" "/etc/ssl/CA/CasjaysDev/private" "/etc/ssl/CA/CasjaysDev/certs"
+		# casjay-base ships a committed key/cert pair at this path - this is only a
+		# fallback for the rare case it's missing on the deployed host
+		if [ ! -s "$ssl_key" ] || [ ! -s "$ssl_crt" ]; then
+			ssl_cn="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo 'localhost')"
+			__printf_cyan "Generating a self-signed certificate for $ssl_cn"
+			__devnull openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes -keyout "$ssl_key" -out "$ssl_crt" \
+				-subj "/CN=$ssl_cn" -addext "subjectAltName=DNS:$ssl_cn,DNS:localhost,IP:127.0.0.1" ||
+				__printf_red "Failed to generate a self-signed certificate"
+		fi
+		chmod -f 600 "$ssl_key"
+		chmod -f 644 "$ssl_crt"
+		# cert.pem must be the leaf certificate that matches $ssl_key - it
+		# was previously set to the CA cert instead, which left cert.pem
+		# and privkey.pem as a non-matching pair (httpd: AH02565)
+		[ -f "$ssl_crt" ] && cp -Rf "$ssl_crt" "/etc/letsencrypt/live/domain/cert.pem"
+		[ -f "/etc/ssl/CA/CasjaysDev/certs/ca.crt" ] && cp -Rf "/etc/ssl/CA/CasjaysDev/certs/ca.crt" "/etc/letsencrypt/live/domain/chain.pem"
+		if [ -f "$ssl_crt" ] && [ -f "/etc/ssl/CA/CasjaysDev/certs/ca.crt" ]; then
+			cat "$ssl_crt" "/etc/ssl/CA/CasjaysDev/certs/ca.crt" >"/etc/letsencrypt/live/domain/fullchain.pem"
+		elif [ -f "$ssl_crt" ]; then
+			cp -Rf "$ssl_crt" "/etc/letsencrypt/live/domain/fullchain.pem"
+		fi
+		[ -f "$ssl_key" ] && cp -Rf "$ssl_key" "/etc/letsencrypt/live/domain/privkey.pem"
+		find "/etc/letsencrypt" -type f -exec chmod 644 {} \;
 		find "/etc/letsencrypt" -type d -exec chmod 755 {} \;
+		chmod -f 600 "/etc/letsencrypt/live/domain/privkey.pem"
+		# Cockpit loads every pair in ws-certs.d - the key must stay owner-only
+		if [ -d "/etc/cockpit/ws-certs.d" ] && [ -s "$ssl_key" ]; then
+			cp -f "$ssl_crt" "/etc/cockpit/ws-certs.d/1-my-cert.cert"
+			cp -f "$ssl_key" "/etc/cockpit/ws-certs.d/1-my-cert.key"
+			chmod -f 644 "/etc/cockpit/ws-certs.d/1-my-cert.cert"
+			chmod -f 600 "/etc/cockpit/ws-certs.d/1-my-cert.key"
+		fi
 	fi
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -389,7 +422,7 @@ __install_pkg() {
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 __detect_selinux() {
 	if [ -f "/etc/selinux/config" ]; then
-		grep -s -- 'SELINUX=' "/etc/selinux/config" | grep -q -- 'enabled' || return 1
+		grep -s 'SELINUX=' "/etc/selinux/config" | grep -q 'enabled' || return 1
 	elif type -P selinuxenabled >/dev/null 2>&1; then
 		selinuxenabled && return 1 || return 0
 	else
@@ -476,13 +509,13 @@ __domain_name() {
 	fi
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-printf_head() {
+__printf_head() {
 	__printf_color "\n##################################################\n$*\n##################################################\n" 6
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 __printf_clear() {
 	clear
-	printf_head "$*"
+	__printf_head "$*"
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 __rm_if_exists() {
@@ -659,26 +692,29 @@ if type -P systemmgr >/dev/null 2>&1; then
 fi
 __printf_green "Installer has been initialized"
 ##################################################################################################################
-printf_head "Fixing initscripts"
+__printf_head "Fixing initscripts"
 ##################################################################################################################
 __remove_pkg initscripts
 __devnull yum -yy --allowerasing install initscripts net-tools
 ##################################################################################################################
-printf_head "Installing vnstat"
+__printf_head "Installing vnstat"
 ##################################################################################################################
 __install_pkg vnstat
-system_service_enable vnstat && systemctl restart vnstat &>/dev/null
+__system_service_enable vnstat && systemctl restart vnstat &>/dev/null
 ##################################################################################################################
-printf_head "Configuring the kernel"
+__printf_head "Configuring the kernel"
 ##################################################################################################################
 if [ "$PKMGR_DEFAULT_KERNEL" = "ml" ] || [ "$PKMGR_DEFAULT_KERNEL" = "kernel-ml" ]; then
 	__kernel_ml
-	__install_pkg kernel-ml-modules
-	__install_pkg kernel-ml-modules-extra
 elif [ "$PKMGR_DEFAULT_KERNEL" = "lt" ] || [ "$PKMGR_DEFAULT_KERNEL" = "kernel-lt" ]; then
-	__kernel_lt
-	__install_pkg kernel-lt-modules
-	__install_pkg kernel-lt-modules-extra
+	# elrepo publishes no kernel-lt for EL10+ - fall back to kernel-ml
+	if [ "$RELEASE_VER" -ge 10 ]; then
+		__printf_yellow "kernel-lt is not published for EL$RELEASE_VER - using kernel-ml instead"
+		PKMGR_DEFAULT_KERNEL="kernel-ml"
+		__kernel_ml
+	else
+		__kernel_lt
+	fi
 else
 	PKMGR_DEFAULT_KERNEL="kernel"
 fi
@@ -698,11 +734,11 @@ if [ "$PKMGR_DEFAULT_KERNEL" != "kernel" ]; then
 	unset yum_conf kernel_excl
 fi
 ##################################################################################################################
-printf_head "Disabling selinux"
+__printf_head "Disabling selinux"
 ##################################################################################################################
 __disable_selinux
 ##################################################################################################################
-printf_head "Configuring cores for compiling"
+__printf_head "Configuring cores for compiling"
 ##################################################################################################################
 numberofcores=$(grep -c -- ^processor /proc/cpuinfo)
 __printf_yellow "Total cores available: $numberofcores"
@@ -717,7 +753,8 @@ if [ $numberofcores -gt 1 ]; then
 #########################################################################
 CARCH="x86_64"
 CHOST="x86_64-pc-linux-gnu"
-CFLAGS="-march=x86-64 -mtune=generic -O2 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fcf-protection -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
+CFLAGS="-march=x86-64 -mtune=generic -O2 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat \
+-Werror=format-security -fstack-clash-protection -fcf-protection -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
 CXXFLAGS="\$CFLAGS -Wp,-D_GLIBCXX_ASSERTIONS"
 LDFLAGS="-Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now -Wl,-z,pack-relative-relocs"
 LTOFLAGS="-flto=auto"
@@ -764,11 +801,11 @@ EOF
 	fi
 fi
 ##################################################################################################################
-printf_head "Grabbing ssh key[s]: from $PKMGR_SSH_KEY_LOCATION for $USER"
+__printf_head "Grabbing ssh key[s]: from $PKMGR_SSH_KEY_LOCATION for $USER"
 ##################################################################################################################
 __get_user_ssh_key
 ##################################################################################################################
-printf_head "Configuring the system"
+__printf_head "Configuring the system"
 ##################################################################################################################
 __retrieve_repo_file
 __run_external timedatectl set-timezone America/New_York
@@ -778,7 +815,7 @@ unset _oci_pkgs
 __remove_pkg chrony cronie-anacron sendmail sendmail-cf esmtp
 __install_pkg postfix
 __install_pkg net-tools
-__install_pkg wget1-wget
+__install_pkg wget2-wget
 __install_pkg curl
 __install_pkg git
 __install_pkg s-nail
@@ -791,7 +828,7 @@ __rm_if_exists /tmp/dotfiles
 __rm_if_exists /root/anaconda-ks.cfg /var/log/anaconda
 __run_external "dnf upgrade -y -q"
 ##################################################################################################################
-printf_head "Enabling ip forwarding"
+__printf_head "Enabling ip forwarding"
 ##################################################################################################################
 sysctl_ip4_found=no
 sysctl_ip6_found=no
@@ -812,10 +849,8 @@ shopt -u nullglob
 [ "$sysctl_ip6_found" = "yes" ] || echo "net.ipv6.conf.all.forwarding=1" >>'/etc/sysctl.conf'
 unset sysctl_ip4_found sysctl_ip6_found sysctlconf
 ##################################################################################################################
-printf_head "Installing the packages for $RELEASE_NAME"
+__printf_head "Installing the packages for $RELEASE_NAME"
 ##################################################################################################################
-__install_pkg awstats
-__install_pkg fedora-release
 __install_pkg bash
 __install_pkg bash-completion
 __install_pkg biosdevname
@@ -835,20 +870,14 @@ __install_pkg dialog
 __install_pkg docker-ce
 __install_pkg ethtool
 __install_pkg findutils
-__install_pkg fortune-mod
 __install_pkg gawk
 __install_pkg gc
 __install_pkg gcc
 __install_pkg git
 __install_pkg gnupg2
 __install_pkg gnutls
-__install_pkg grub2-common
-__install_pkg grub2-pc-modules
-__install_pkg grub2-efi-x64
-__install_pkg grub2-efi-x64-modules
 __install_pkg grub2-tools
 __install_pkg grub2-tools-extra
-__install_pkg shim-x64
 __install_pkg grubby
 __install_pkg gzip
 __install_pkg util-linux-core
@@ -860,18 +889,18 @@ __install_pkg httpd
 __install_pkg less
 __install_pkg logrotate
 __install_pkg lsof
-__install_pkg s-nail
 __install_pkg make
 __install_pkg man-db
 __install_pkg man-pages
-__install_pkg plocate
 __install_pkg mod_fcgid
+__install_pkg mod_geoip
 __install_pkg mod_http2
 __install_pkg mod_maxminddb
 __install_pkg mod_perl
 __install_pkg mod_ssl
-__install_pkg python3-mod_wsgi
+__install_pkg mod_wsgi
 __install_pkg mod_proxy_html
+__install_pkg mod_proxy_uwsgi
 __install_pkg mosh
 __install_pkg mrtg
 __install_pkg munin
@@ -892,18 +921,7 @@ __install_pkg perl-DBD-Pg
 __install_pkg perl-DBD-MySQL
 __install_pkg perl-DBD-SQLite
 __install_pkg perl-DBD-MariaDB
-__install_pkg php
-__install_pkg php-cli
-__install_pkg php-common
-__install_pkg php-fpm
-__install_pkg php-gd
-__install_pkg php-gmp
-__install_pkg php-intl
-__install_pkg php-mbstring
-__install_pkg php-mysqlnd
-__install_pkg php-pdo
-__install_pkg php-pgsql
-__install_pkg php-xml
+__install_pkg php php-cli php-common php-fpm php-gd php-gmp php-intl php-mbstring php-mysqlnd php-pdo php-pgsql php-xml
 __install_pkg pinentry
 __install_pkg postfix
 __install_pkg postfix-pcre
@@ -934,20 +952,20 @@ __install_pkg symlinks
 __install_pkg tar
 __install_pkg tzdata
 __install_pkg unzip
-__install_pkg webalizer
-__install_pkg wget1-wget
+__install_pkg wget2-wget
 __install_pkg which
 __install_pkg whois
 __install_pkg xz
 __install_pkg xz-libs
 __install_pkg dnf-utils
 __install_pkg zip
-__install_pkg zlib-ng-compat
 ##################################################################################################################
-printf_head "Installing version-specific packages"
+__printf_head "Installing version-specific packages"
 ##################################################################################################################
-# No EL-style version-specific packages on Fedora
-true
+__install_pkg awstats
+__install_pkg fortune-mod
+__install_pkg deltarpm
+__install_pkg redhat-lsb
 ##################################################################################################################
 if [ "$SYSTEM_TYPE" = "dns" ]; then
 	if __devnull __install_pkg ntp || __devnull __install_pkg ntpsec; then
@@ -960,11 +978,11 @@ else
 	SERVICES_ENABLE="$SERVICES_ENABLE chrony"
 fi
 ##################################################################################################################
-printf_head "Fixing grub"
+__printf_head "Fixing grub"
 ##################################################################################################################
 __run_grub
 ##################################################################################################################
-printf_head "Installing custom web server files"
+__printf_head "Installing custom web server files"
 ##################################################################################################################
 if [ "${PKMGR_CONFIG_SETUP:-yes}" != "no" ]; then
 [ -d "$CONFIG_TEMP_DIR" ] && __devnull __rm_if_exists "$CONFIG_TEMP_DIR"
@@ -987,7 +1005,7 @@ run_post_message="Installing default server files" __run_post sudo -HE STATICSIT
 	bash -c "$(curl -LSs "https://github.com/casjay-templates/default-web-assets/raw/main/setup.sh")"
 [ -f "/etc/httpd/modules/mod_wsgi_python3.so" ] && ln -sf /etc/httpd/modules/mod_wsgi_python3.so /etc/httpd/modules/mod_wsgi.so
 ##################################################################################################################
-printf_head "Deleting files"
+__printf_head "Deleting files"
 ##################################################################################################################
 if __system_service_active named || __port_in_use "53"; then
 	__devnull __rm_if_exists $CONFIG_TEMP_DIR/etc/named*
@@ -1031,10 +1049,10 @@ for rm_file in /etc/cron*/0* /etc/cron*/dailyjobs /var/ftp/uploads /etc/httpd/co
 	__run_post __devnull __rm_if_exists "$rm_file"
 done
 ##################################################################################################################
-printf_head "setting up config files"
+__printf_head "setting up config files"
 ##################################################################################################################
 set_domainname="$(__domain_name)"
-myhostnameshort="$PKMGR_SET_HOSTNAME"
+myhostnameshort="$SET_HOSTNAME"
 myserverhostname="$(hostname -f)"
 myserverdomainname="$(hostname -f)"
 NETDEV=""
@@ -1091,15 +1109,25 @@ fi
 if [ -z "$does_lo_have_ipv6" ]; then
 	sed -i 's|inet_interfaces.*|inet_interfaces = 127.0.0.1|g' $CONFIG_TEMP_DIR/etc/postfix/main.cf
 fi
-for fwdir in fail2ban firewalld; do
-	if [ -d "/etc/$fwdir" ]; then
-		__devnull __rm_if_exists "$CONFIG_TEMP_DIR/etc/$fwdir"
-	fi
-done
+__devnull __rm_if_exists $CONFIG_TEMP_DIR/etc/{shorewall,shorewall6}
 __devnull mkdir -p /etc/rsync.d /var/log/named
 __devnull rsync -avhP $CONFIG_TEMP_DIR/{etc,root,usr,var}* /
+# mod_geoip has no installable package on EL9/10 (the legacy Apache GeoIP
+# module was retired); guard the deployed httpd.conf so httpd can still
+# start when it's missing, without touching hosts where it's installed
+if [ -f /etc/httpd/conf/httpd.conf ] && [ ! -e /usr/lib64/httpd/modules/mod_geoip.so ] && [ ! -e /etc/httpd/modules/mod_geoip.so ]; then
+	__devnull sed -i '/^LoadModule geoip_module/s/^/#/' /etc/httpd/conf/httpd.conf
+	__devnull sed -i '/^GeoIPEnable\|^GeoIPDBFile/s/^/#/' /etc/httpd/conf/httpd.conf
 fi
-if [ -f "/etc/fail2ban/jail.local" ]; then
+fi
+# docker-ce on el8 (26.x) refuses to start with "ip6tables": true unless
+# "experimental": true is also set ("ip6tables rules are only available
+# if experimental features are enabled"); docker-ce on el9/10 (29.x) does
+# not enforce this, so only patch el8 to avoid changing behavior elsewhere
+if [ "$RELEASE_VER" -le 8 ] && [ -f /etc/docker/daemon.json ] && ! grep -q -- '"experimental"' /etc/docker/daemon.json; then
+	__devnull sed -i 's/"ip6tables": true,/"ip6tables": true,\n  "experimental": true,/' /etc/docker/daemon.json
+fi
+if [ -f /etc/fail2ban/jail.local ]; then
 	# Every jail in jail.local is permanently enabled - min.sh only runs
 	# once, at bootstrap, so a jail could never be enabled later if it
 	# depended on detecting the service at bootstrap time. Instead we just
@@ -1108,12 +1136,13 @@ if [ -f "/etc/fail2ban/jail.local" ]; then
 	# installed and starts writing to that same path, the already-running
 	# jail picks it up immediately with no further changes here.
 	__devnull mkdir -p /var/log/proftpd /var/log/httpd /var/log/nginx /var/log/named /var/log/mysql /var/opt/mssql/log
-	__devnull touch /var/log/proftpd/auth.log /var/log/httpd/error_log /var/log/nginx/error.log /var/log/nginx/access.log
-	__devnull touch /var/log/named/security.log /var/log/mysql/mysql.log /var/opt/mssql/log/errorlog /var/log/maillog /var/log/secure /var/log/fail2ban.log
+	__devnull touch /var/log/proftpd/auth.log /var/log/httpd/error_log /var/log/nginx/error.log /var/log/nginx/access.log \
+		/var/log/named/security.log /var/log/mysql/mysql.log /var/opt/mssql/log/errorlog /var/log/maillog /var/log/secure /var/log/fail2ban.log
 fi
 __devnull sed -i "s#myserverdomainname#$HOSTNAME#g" /etc/sysconfig/network
 __devnull sed -i "s#mydomain#$set_domainname#g" /etc/sysconfig/network
 __devnull chmod 644 -Rf /etc/cron.d/* /etc/logrotate.d/*
+__devnull chmod -f 600 /etc/my.cnf
 __devnull touch /etc/postfix/mydomains.pcre
 __devnull chattr +i /etc/resolv.conf
 if [ -z "$IS_INSTALLED_BIND" ]; then
@@ -1137,7 +1166,16 @@ else
 	__devnull chmod g+s /usr/sbin/postdrop
 	__devnull killall -9 postdrop
 	__devnull postfix set-permissions create-missing
-	__devnull postmap /etc/postfix/transport /etc/postfix/canonical /etc/postfix/virtual /etc/postfix/mydomains /etc/postfix/sasl/passwd
+	if [ "$RELEASE_VER" -ge 10 ]; then
+		# el10's postfix build drops hash-map support (only lmdb/cdb/sdbm
+		# remain), but default_database_type is still compiled as "hash" -
+		# force lmdb explicitly, in main.cf and in postmap, so postfix
+		# doesn't hit "fatal: unsupported map type: hash"
+		__devnull sed -i 's#^smtp_sasl_password_maps.*#smtp_sasl_password_maps          = lmdb:/etc/postfix/sasl/passwd#' /etc/postfix/main.cf
+		__devnull postmap lmdb:/etc/postfix/transport lmdb:/etc/postfix/canonical lmdb:/etc/postfix/virtual lmdb:/etc/postfix/mydomains lmdb:/etc/postfix/sasl/passwd
+	else
+		__devnull postmap /etc/postfix/transport /etc/postfix/canonical /etc/postfix/virtual /etc/postfix/mydomains /etc/postfix/sasl/passwd
+	fi
 	__devnull newaliases &>/dev/null || newaliases.postfix -I &>/dev/null
 fi
 if ! grep -sq -- 'kernel.domainname' "/etc/sysctl.conf"; then
@@ -1146,12 +1184,11 @@ fi
 __devnull systemctl daemon-reload
 unset postfix_proto
 ##################################################################################################################
-printf_head "Installing incus"
+__printf_head "Installing incus"
 ##################################################################################################################
 incus_setup_failed="no"
-if ! grep -Rqsi -- 'copr.*incus' '/etc/yum.repos.d'; then
+if ! grep -Rqsi 'copr.*incus' '/etc/yum.repos.d'; then
 	__printf_green "Enabling the dnf incus repo"
-	__devnull dnf -y install epel-release
 	__devnull dnf -y copr enable neil/incus
 	__yum makecache
 fi
@@ -1182,62 +1219,37 @@ if [ "$incus_setup_failed" = "no" ]; then
 	fi
 fi
 ##################################################################################################################
-printf_head "Configuring the firewall"
-##################################################################################################################
-__devnull systemctl start firewalld
-__devnull firewall-cmd --permanent --zone=public --add-service=ssh
-if __devnull firewall-cmd --info-service=mosh; then
-	__devnull firewall-cmd --permanent --zone=public --add-service=mosh
-else
-	__devnull firewall-cmd --permanent --zone=public --add-port=60000-61000/udp
-fi
-__devnull firewall-cmd --permanent --zone=public --add-service=http
-__devnull firewall-cmd --permanent --zone=public --add-service=https
-__devnull firewall-cmd --permanent --zone=public --remove-service=cockpit
-# docker-ce auto-manages its own "docker" firewalld zone for docker0 at
-# runtime (D-Bus, target=ACCEPT) - a manual --change-interface=docker0
-# binding here collides with it (ZONE_CONFLICT: interface already bound
-# to a zone), so it has been dropped. incus does NOT self-manage a zone
-# (ipv4.firewall/ipv6.firewall=false on its networks - it deliberately
-# leaves firewalling to the host), so incusbr0 keeps its explicit bind.
-if __devnull command -v incus; then
-	__devnull firewall-cmd --permanent --zone=trusted --change-interface=incusbr0
-fi
-__devnull firewall-cmd --permanent --direct --add-rule ipv4 filter INPUT 0 -p icmp -s 0.0.0.0/0 -d 0.0.0.0/0 -j ACCEPT
-__devnull firewall-cmd --reload
-__devnull systemctl stop firewalld
-##################################################################################################################
-printf_head "Configuring applications"
+__printf_head "Configuring applications"
 ##################################################################################################################
 __devnull timedatectl set-ntp true
 ##################################################################################################################
-printf_head "Configuring cloudflare dns for $PKMGR_SET_HOSTNAME"
+__printf_head "Configuring cloudflare dns for $SET_HOSTNAME"
 ##################################################################################################################
 [ -f "$HOME/.config/secure/cloudflare.txt" ] && . "$HOME/.config/secure/cloudflare.txt"
 if [ -n "$CLOUDFLARE_EMAIL" ] && [ -n "$CLOUDFLARE_API_KEY" ] && [ -n "$CLOUDFLARE_ZONE_NAME" ] && type -P cloudflare >/dev/null 2>&1; then
 	cf_args=()
 	[ -n "$CLOUDFLARE_PROXY" ] && cf_args+=(--proxy "$CLOUDFLARE_PROXY")
-	if __devnull cloudflare update "$PKMGR_SET_HOSTNAME" "${cf_args[@]}"; then
+	if __devnull cloudflare update "$SET_HOSTNAME" "${cf_args[@]}"; then
 		CLOUDFLARE_DOMAIN="yes"
-		__devnull cloudflare update "*.$PKMGR_SET_HOSTNAME" "${cf_args[@]}"
-		__printf_blue "Successfully updated $PKMGR_SET_HOSTNAME in $CLOUDFLARE_ZONE_NAME"
-	elif __devnull cloudflare create "$PKMGR_SET_HOSTNAME" "${cf_args[@]}"; then
+		__devnull cloudflare update "*.$SET_HOSTNAME" "${cf_args[@]}"
+		__printf_blue "Successfully updated $SET_HOSTNAME in $CLOUDFLARE_ZONE_NAME"
+	elif __devnull cloudflare create "$SET_HOSTNAME" "${cf_args[@]}"; then
 		CLOUDFLARE_DOMAIN="yes"
-		__devnull cloudflare create "*.$PKMGR_SET_HOSTNAME" "${cf_args[@]}"
-		__printf_blue "Created $PKMGR_SET_HOSTNAME for $CLOUDFLARE_ZONE_NAME"
+		__devnull cloudflare create "*.$SET_HOSTNAME" "${cf_args[@]}"
+		__printf_blue "Created $SET_HOSTNAME for $CLOUDFLARE_ZONE_NAME"
 	else
-		__printf_red "Failed to create record $PKMGR_SET_HOSTNAME for zone $CLOUDFLARE_ZONE_NAME"
+		__printf_red "Failed to create record $SET_HOSTNAME for zone $CLOUDFLARE_ZONE_NAME"
 	fi
 	unset cf_args
 fi
 if [ "$CLOUDFLARE_DOMAIN" = "yes" ] && [ "$CLOUDFLARE_PROXY" = "true" ]; then
 	if [ -d "/etc/nginx/vhosts.d" ]; then
-		cat <<EOF >"/etc/nginx/vhosts.d/$PKMGR_SET_HOSTNAME.$CLOUDFLARE_ZONE_NAME.conf"
+		cat <<EOF >"/etc/nginx/vhosts.d/$SET_HOSTNAME.$CLOUDFLARE_ZONE_NAME.conf"
 server {
     listen                                  80;
-    server_name                             $PKMGR_SET_HOSTNAME.$CLOUDFLARE_ZONE_NAME *.$PKMGR_SET_HOSTNAME.$CLOUDFLARE_ZONE_NAME;
-    access_log                              /var/log/nginx/access.$PKMGR_SET_HOSTNAME.$CLOUDFLARE_ZONE_NAME.log;
-    error_log                               /var/log/nginx/error.$PKMGR_SET_HOSTNAME.$CLOUDFLARE_ZONE_NAME.log info;
+    server_name                             $SET_HOSTNAME.$CLOUDFLARE_ZONE_NAME *.$SET_HOSTNAME.$CLOUDFLARE_ZONE_NAME;
+    access_log                              /var/log/nginx/access.$SET_HOSTNAME.$CLOUDFLARE_ZONE_NAME.log;
+    error_log                               /var/log/nginx/error.$SET_HOSTNAME.$CLOUDFLARE_ZONE_NAME.log info;
 
   location / {
     proxy_ssl_verify                        off;
@@ -1265,7 +1277,7 @@ EOF
 	unset CLOUDFLARE_DOMAIN
 fi
 ##################################################################################################################
-printf_head "Setting up ssl certificates"
+__printf_head "Setting up ssl certificates"
 ##################################################################################################################
 ## If using letsencrypt certificates
 [ -f "$HOME/.config/myscripts/acme-cli/settings.conf" ] && . "$HOME/.config/myscripts/acme-cli/settings.conf"
@@ -1274,7 +1286,7 @@ le_primary_domain="${le_primary_domain:-$(hostname -f 2>/dev/null)}"
 [[ "$le_primary_domain" == *[a-zA-Z0-9].[a-zA-Z0-9]* ]] || le_primary_domain=""
 if [ -n "$le_primary_domain" ]; then
 	le_options="--primary $le_primary_domain"
-	le_domain_list="${PKMGR_ACME_CLI_DOMAIN_LIST:-$le_domains}"
+	le_domain_list="${ACME_CLI_DOMAIN_LIST:-$le_domains}"
 	[ "$le_primary_domain" = "$HOSTNAME" ] || le_options=""
 	if [ -f "/etc/certbot/dns.conf" ]; then
 		chmod -f 600 "/etc/certbot/dns.conf"
@@ -1295,12 +1307,14 @@ if [ -n "$le_primary_domain" ]; then
 		if [ -d "/etc/cockpit/ws-certs.d" ]; then
 			__devnull __rm_if_exists "/etc/cockpit/ws-certs.d"/*
 			cat /etc/letsencrypt/live/domain/fullchain.pem >/etc/cockpit/ws-certs.d/1-my-cert.cert
-			cat /etc/letsencrypt/live/domain/privkey.pem >>/etc/cockpit/ws-certs.d/1-my-cert.key
+			cat /etc/letsencrypt/live/domain/privkey.pem >/etc/cockpit/ws-certs.d/1-my-cert.key
+			chmod -f 644 /etc/cockpit/ws-certs.d/1-my-cert.cert
+			chmod -f 600 /etc/cockpit/ws-certs.d/1-my-cert.key
 		fi
-		find "/etc/postfix" "/etc/httpd" "/etc/nginx" /etc/proftpd* -type f -exec sed -i \
-			's#/etc/ssl/CA/CasjaysDev/certs/localhost.crt#/etc/letsencrypt/live/domain/fullchain.pem#g' {} \; 2>/dev/null
-		find "/etc/postfix" "/etc/httpd" "/etc/nginx" /etc/proftpd* -type f -exec sed -i \
-			's#/etc/ssl/CA/CasjaysDev/private/localhost.key#/etc/letsencrypt/live/domain/privkey.pem#g' {} \; 2>/dev/null
+		find "/etc/postfix" "/etc/httpd" "/etc/nginx" /etc/proftpd* -type f \
+			-exec sed -i 's#/etc/ssl/CA/CasjaysDev/certs/localhost.crt#/etc/letsencrypt/live/domain/fullchain.pem#g' {} \; 2>/dev/null
+		find "/etc/postfix" "/etc/httpd" "/etc/nginx" /etc/proftpd* -type f \
+			-exec sed -i 's#/etc/ssl/CA/CasjaysDev/private/localhost.key#/etc/letsencrypt/live/domain/privkey.pem#g' {} \; 2>/dev/null
 		if [ -d "/etc/letsencrypt/renewal-hooks/post" ]; then
 			if [ ! -f "/etc/letsencrypt/renewal-hooks/post/exec.sh" ]; then
 				cat <<EOF | tee "/etc/letsencrypt/renewal-hooks/post/system.sh" >/dev/null
@@ -1313,12 +1327,16 @@ EOF
 #!/usr/bin/env sh
 cat "/etc/letsencrypt/live/domain/privkey.pem" >"/etc/ssl/certs/\$HOSTNAME.key"
 cat "/etc/letsencrypt/live/domain/fullchain.pem" >"/etc/ssl/certs/\$HOSTNAME.cert"
+chmod -f 600 "/etc/ssl/certs/\$HOSTNAME.key"
+chmod -f 644 "/etc/ssl/certs/\$HOSTNAME.cert"
 EOF
 
 			cat <<EOF | tee "/etc/letsencrypt/renewal-hooks/post/cockpit.sh" >/dev/null
 #!/usr/bin/env sh
 cat "/etc/letsencrypt/live/domain/privkey.pem" >"/etc/cockpit/ws-certs.d/1-my-cert.key"
 cat "/etc/letsencrypt/live/domain/fullchain.pem" >"/etc/cockpit/ws-certs.d/1-my-cert.cert"
+chmod -f 600 "/etc/cockpit/ws-certs.d/1-my-cert.key"
+chmod -f 644 "/etc/cockpit/ws-certs.d/1-my-cert.cert"
 systemctl is-enabled cockpit >/dev/null 2>&1 && systemctl restart cockpit >/dev/null 2>&1
 
 EOF
@@ -1374,7 +1392,18 @@ fi
 type -P update-ca-trust >/dev/null 2>&1 && __devnull update-ca-trust && __devnull update-ca-trust extract
 type -P dpkg-reconfigure >/dev/null 2>&1 && __devnull dpkg-reconfigure ca-certificates
 ##################################################################################################################
-printf_head "Setting up munin-node"
+__printf_head "Setting up rsyncd"
+##################################################################################################################
+# The [backup] module requires an auth secret - generate one on first run only,
+# it is never shipped in casjay-base
+if [ -f "/etc/rsyncd.conf" ] && [ ! -s "/etc/rsyncd.secrets" ]; then
+	printf "backup:%s\n" "$(openssl rand -base64 24 | tr -d '\n')" >"/etc/rsyncd.secrets"
+	__printf_cyan "Generated rsync credentials in /etc/rsyncd.secrets"
+fi
+chown -f root:root "/etc/rsyncd.secrets" 2>/dev/null
+chmod -f 600 "/etc/rsyncd.secrets" 2>/dev/null
+##################################################################################################################
+__printf_head "Setting up munin-node"
 ##################################################################################################################
 mkdir -p "/var/log/munin"
 chmod -f 777 "/var/log/munin"
@@ -1383,8 +1412,17 @@ __does_group_exist "munin" && chgrp -Rf "munin" "/var/log/munin"
 __does_user_exist 'munin-node' && chown -Rf "munin" "/var/log/munin-node"
 __does_group_exist "munin-node" && chgrp -Rf "munin" "/var/log/munin-node"
 __run_post "munin-node-configure --remove-also --shell" >/dev/null 2>/dev/null
+# Plugin credentials ship as the non-functional token CHANGEME_AT_BOOTSTRAP so a
+# real password is never committed - say so loudly instead of failing silently
+if grep -q -- 'CHANGEME_AT_BOOTSTRAP' "/etc/munin/plugin-conf.d/munin-node" 2>/dev/null; then
+	__printf_yellow "Placeholder credentials remain in /etc/munin/plugin-conf.d/munin-node"
+	__printf_yellow "Set the real passwords there, or delete the sections you do not monitor"
+fi
+# This file holds credentials once they are filled in - keep it off world-read
+chown -f root:munin "/etc/munin/plugin-conf.d/munin-node" 2>/dev/null
+chmod -f 640 "/etc/munin/plugin-conf.d/munin-node" 2>/dev/null
 ##################################################################################################################
-printf_head "Setting up tor"
+__printf_head "Setting up tor"
 ##################################################################################################################
 if type -P tor >/dev/null 2>&1; then
 	__devnull systemctl restart tor && sleep 5
@@ -1398,7 +1436,7 @@ if type -P tor >/dev/null 2>&1; then
 	printf '%s\n%s\n' "# Generate tor hostnames" "#30 * * * * root " >"/etc/cron.d/tor_hostname"
 fi
 ##################################################################################################################
-printf_head "Setting up bind dns [named]"
+__printf_head "Setting up bind dns [named]"
 ##################################################################################################################
 if ! command -v named >/dev/null 2>&1; then
 	__devnull __rm_if_exists /etc/named
@@ -1407,7 +1445,7 @@ if ! command -v named >/dev/null 2>&1; then
 	__devnull __rm_if_exists /etc/logrotate.d/named
 fi
 ##################################################################################################################
-printf_head "Generating default webserver for $HOSTNAME"
+__printf_head "Generating default webserver for $HOSTNAME"
 ##################################################################################################################
 if [ -z "$IS_INSTALLED_HTTPD" ] || [ -z "$IS_INSTALLED_NGINX" ]; then
 	if [ -d "/var/www/nginx/domains/$HOSTNAME" ]; then
@@ -1456,7 +1494,7 @@ if [ -n "$GET_WEB_GROUP" ]; then
 	done
 fi
 ##################################################################################################################
-printf_head "Setting up the reverse proxy for cockpit"
+__printf_head "Setting up the reverse proxy for cockpit"
 ##################################################################################################################
 if [ -d "/etc/nginx/vhosts.d" ]; then
 	cat <<EOF | tee "/etc/nginx/vhosts.d/cockpit.$set_domainname.conf" >/dev/null
@@ -1507,7 +1545,7 @@ server {
 EOF
 fi
 ##################################################################################################################
-printf_head "Creating directories"
+__printf_head "Creating directories"
 ##################################################################################################################
 mkdir -p "/mnt/backups" "/var/www/html/.well-known" "/etc/letsencrypt/live"
 echo "" >>/etc/fstab
@@ -1520,15 +1558,15 @@ if [ -n "$IS_NETWORK_INTERNAL" ] && __devnull ping -q -W 1 -c 2 10.0.254.1; then
 fi
 mount -a
 ##################################################################################################################
-printf_head "Installing custom system configs"
+__printf_head "Installing custom system configs"
 ##################################################################################################################
 __run_post "systemmgr install $SYSTEMMGR_CONFIGS"
 ##################################################################################################################
-printf_head "Installing custom dotfiles"
+__printf_head "Installing custom dotfiles"
 ##################################################################################################################
 __run_post "dfmgr update $DFMGR_CONFIGS"
 ##################################################################################################################
-printf_head "Updating personal dotfiles"
+__printf_head "Updating personal dotfiles"
 ##################################################################################################################
 if [ -x "$HOME/.local/dotfiles/personal/install.sh" ]; then
 	__run_external "$HOME/.local/dotfiles/personal/install.sh"
@@ -1537,28 +1575,28 @@ fi
 [ -f "$HOME/.profile" ] && . "$HOME/.profile"
 ##################################################################################################################
 if [ "$SYSTEM_TYPE" = "vpn" ]; then
-	printf_head "Disabling services: httpd,nginx"
-	system_service_disable httpd
-	system_service_disable nginx
+	__printf_head "Disabling services: httpd,nginx"
+	__system_service_disable httpd
+	__system_service_disable nginx
 fi
 if [ "$SYSTEM_TYPE" = "mail" ]; then
 	if [ -x "$HOME/Projects/github/dfprivate/email/install.sh" ]; then
-		printf_head "Running installer script for email server"
+		__printf_head "Running installer script for email server"
 		eval "$HOME/Projects/github/dfprivate/email/install.sh" >/dev/null 2>&1
 	fi
 elif [ "$SYSTEM_TYPE" = "db" ] || [ "$set_domainname" = "sqldb.us" ]; then
 	if [ -x "$HOME/Projects/github/dfprivate/sql/install.sh" ]; then
-		printf_head "Running installer script for database server"
+		__printf_head "Running installer script for database server"
 		eval "$HOME/Projects/github/dfprivate/sql/install.sh" >/dev/null 2>&1
 	fi
 elif [ "$SYSTEM_TYPE" = "dns" ] || [ "$set_domainname" = "casjaydns.com" ]; then
 	if [ -x "$HOME/Projects/github/dfprivate/dns/install.sh" ]; then
-		printf_head "Running installer script for dns server"
+		__printf_head "Running installer script for dns server"
 		eval "$HOME/Projects/github/dfprivate/dns/install.sh" >/dev/null 2>&1
 	fi
 fi
 ##################################################################################################################
-printf_head "Removing iptables-legacy if iptables-nft is available"
+__printf_head "Removing iptables-legacy if iptables-nft is available"
 ##################################################################################################################
 # iptables-legacy can prevent docker from starting on EL9. Remove only when iptables-nft is present
 # so the host is not left without an iptables binary, then point alternatives at the nft shim.
@@ -1568,7 +1606,7 @@ if rpm -q iptables-legacy >/dev/null 2>&1 && rpm -q iptables-nft >/dev/null 2>&1
 	__devnull alternatives --set ip6tables /usr/sbin/ip6tables-nft
 fi
 ##################################################################################################################
-printf_head "Installing and enabling intrusion detection/prevention"
+__printf_head "Installing and enabling intrusion detection/prevention"
 ##################################################################################################################
 __install_pkg fail2ban
 __install_pkg firewalld
@@ -1579,27 +1617,27 @@ if type -P rkhunter >/dev/null 2>&1; then
 	__devnull rkhunter --update
 fi
 ##################################################################################################################
-printf_head "Enabling services"
+__printf_head "Enabling services"
 ##################################################################################################################
 for service_enable in $SERVICES_ENABLE; do
 	if [ -n "$service_enable" ] && __system_service_exists "$service_enable"; then
-		system_service_enable $service_enable
+		__system_service_enable $service_enable
 		systemctl restart $service_enable >/dev/null 2>&1
 	fi
 done
 ##################################################################################################################
-printf_head "Disabling services"
+__printf_head "Disabling services"
 ##################################################################################################################
 for service_disable in $SERVICES_DISABLE; do
 	if [ -n "$service_disable" ] && __system_service_exists "$service_disable"; then
-		system_service_disable $service_disable
+		__system_service_disable $service_disable
 	fi
 done
 ##################################################################################################################
-printf_head "Setting up docker"
+__printf_head "Setting up docker"
 ##################################################################################################################
 if type -P dockermgr >/dev/null 2>&1; then
-	system_service_enable docker
+	__system_service_enable docker
 	__devnull systemctl restart docker
 	__run_post dockermgr init && __devnull dockermgr init
 fi
@@ -1607,19 +1645,44 @@ if type -P composemgr >/dev/null 2>&1; then
 	__run_post composemgr --config && __devnull composemgr --env
 fi
 ##################################################################################################################
-printf_head "Disabling dnsmasq"
+__printf_head "Configuring the firewall"
 ##################################################################################################################
-system_service_disable dnsmasq
+__devnull systemctl start firewalld
+__devnull firewall-cmd --permanent --zone=public --add-service=ssh
+if __devnull firewall-cmd --info-service=mosh; then
+	__devnull firewall-cmd --permanent --zone=public --add-service=mosh
+else
+	__devnull firewall-cmd --permanent --zone=public --add-port=60000-61000/udp
+fi
+__devnull firewall-cmd --permanent --zone=public --add-service=http
+__devnull firewall-cmd --permanent --zone=public --add-service=https
+__devnull firewall-cmd --permanent --zone=public --remove-service=cockpit
+# docker-ce auto-manages its own "docker" firewalld zone for docker0 at
+# runtime (D-Bus, target=ACCEPT) - a manual --change-interface=docker0
+# binding here collides with it (ZONE_CONFLICT: interface already bound
+# to a zone), so it has been dropped. incus does NOT self-manage a zone
+# (ipv4.firewall/ipv6.firewall=false on its networks - it deliberately
+# leaves firewalling to the host), so incusbr0 keeps its explicit bind.
+if __devnull command -v incus; then
+	__devnull firewall-cmd --permanent --zone=trusted --change-interface=incusbr0
+fi
+__devnull firewall-cmd --permanent --direct --add-rule ipv4 filter INPUT 0 -p icmp -s 0.0.0.0/0 -d 0.0.0.0/0 -j ACCEPT
+__devnull firewall-cmd --reload
+__devnull systemctl stop firewalld
+##################################################################################################################
+__printf_head "Disabling dnsmasq"
+##################################################################################################################
+__system_service_disable dnsmasq
 __devnull systemctl mask dnsmasq
 __devnull sed -i 's/^dns=dnsmasq/#&/' /etc/NetworkManager/NetworkManager.conf
 # Do not killall dnsmasq - libvirt, incus, and docker each spawn their own dnsmasq
 # instance for their bridge networks; killing them breaks DHCP/DNS for VMs/containers
 ##################################################################################################################
-printf_head "Fixing ip address"
+__printf_head "Fixing ip address"
 ##################################################################################################################
 /root/bin/changeip.sh >/dev/null 2>&1
 ##################################################################################################################
-printf_head "Setting up accounts"
+__printf_head "Setting up accounts"
 ##################################################################################################################
 SETUP_ACCOUNT_NEXT_UID="$PKMGR_SETUP_ACCOUNT_BASE_UID"
 if [ -n "$PKMGR_SETUP_ACCOUNT_ADMIN" ]; then
@@ -1635,16 +1698,15 @@ if [ -n "$PKMGR_SETUP_ACCOUNT_USERS" ]; then
 fi
 unset user_spec SETUP_ACCOUNT_NEXT_UID
 ##################################################################################################################
-printf_head "Cleaning up"
+__printf_head "Cleaning up"
 ##################################################################################################################
-[ -f "/etc/yum/pluginconf.d/subscription-manager.conf" ] && echo "" >"/etc/yum/pluginconf.d/subscription-manager.conf"
 find "/etc" "/usr" "/var" -iname '*.rpmnew' -exec rm -Rf {} \; >/dev/null 2>&1
 find "/etc" "/usr" "/var" -iname '*.rpmsave' -exec rm -Rf {} \; >/dev/null 2>&1
 __devnull rm -Rf /tmp/*.tar "/tmp/dotfiles" "$CONFIG_TEMP_DIR"
 __devnull __retrieve_repo_file
 history -c && history -w
 ##################################################################################################################
-printf_head "Installer version: $(__retrieve_version_file)"
+__printf_head "Installer version: $(__retrieve_version_file)"
 ##################################################################################################################
 mkdir -p "/etc/casjaysdev/updates/versions"
 echo "$VERSION" >"/etc/casjaysdev/updates/versions/configs.txt"
@@ -1653,11 +1715,11 @@ echo "Installed on $(date +'%Y-%m-%d at %H:%M %Z')" >"/etc/casjaysdev/updates/ve
 chmod -Rf 664 "/etc/casjaysdev/updates/versions/configs.txt"
 chmod -Rf 664 "/etc/casjaysdev/updates/versions/installed.txt"
 ##################################################################################################################
-printf_head "Finished configuring $HOSTNAME"
+__printf_head "Finished configuring $HOSTNAME"
 echo ""
 ##################################################################################################################
 if [ "${#SETUP_ACCOUNT_CREDS[@]}" -gt 0 ]; then
-	printf_head "Account credentials"
+	__printf_head "Account credentials"
 	pad=0
 	for entry in "${SETUP_ACCOUNT_CREDS[@]}"; do
 		u="${entry%%:*}"

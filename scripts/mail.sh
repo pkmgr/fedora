@@ -134,8 +134,8 @@ __execute() {
 cat /etc/*-release | grep -- 'ID_LIKE=' | grep -E -- 'rhel|centos' &>/dev/null && true || __printf_exit "This installer is meant to be run on a CentOS based system"
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 __system_service_exists() { systemctl status "$1" 2>&1 | grep -iq -- "$1" && return 0 || return 1; }
-system_service_enable() { systemctl is-enabled --quiet "$1" 2>/dev/null || __execute "systemctl enable $1" "Enabling service: $1" || return 1; }
-system_service_disable() { systemctl status "$1" 2>&1 | grep -iq -- 'active' && __execute "systemctl disable --now $1" "Disabling service: $1" || return 1; }
+__system_service_enable() { systemctl is-enabled --quiet "$1" 2>/dev/null || __execute "systemctl enable $1" "Enabling service: $1" || return 1; }
+__system_service_disable() { systemctl status "$1" 2>&1 | grep -iq -- 'active' && __execute "systemctl disable --now $1" "Disabling service: $1" || return 1; }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 __test_pkg() {
   for pkg in "$@"; do
@@ -252,12 +252,12 @@ __printf_head "Configuring the system"
 __run_external yum clean all
 __run_external yum update -q -y --skip-broken
 __install_pkg vnstat
-system_service_enable vnstat
+__system_service_enable vnstat
 __install_pkg net-tools
 __install_pkg wget
 __install_pkg curl
 __install_pkg git
-__install_pkg nail
+__install_pkg s-nail
 __install_pkg e2fsprogs
 __install_pkg redhat-lsb
 __install_pkg neovim
@@ -302,7 +302,6 @@ __install_pkg autogen-libopts
 __install_pkg automake
 __install_pkg avahi-autoipd
 __install_pkg avahi-libs
-__install_pkg awffull
 __install_pkg awstats
 __install_pkg basesystem
 __install_pkg bash
@@ -344,11 +343,9 @@ __install_pkg cracklib
 __install_pkg cracklib-dicts
 __install_pkg createrepo
 __install_pkg cronie
-__install_pkg cronie-noanacron
 __install_pkg crontabs
 __install_pkg cryptsetup-libs
 __install_pkg cups-libs
-__install_pkg curl
 __install_pkg cyrus-sasl
 __install_pkg cyrus-sasl-devel
 __install_pkg cyrus-sasl-lib
@@ -373,7 +370,6 @@ __install_pkg downtimed
 __install_pkg dracut
 __install_pkg dracut-config-rescue
 __install_pkg dracut-network
-__install_pkg e2fsprogs
 __install_pkg e2fsprogs-libs
 __install_pkg ebtables
 __install_pkg elfutils-default-yama-scope
@@ -414,7 +410,6 @@ __install_pkg gettext
 __install_pkg gettext-libs
 __install_pkg ghostscript
 __install_pkg ghostscript-fonts
-__install_pkg git
 __install_pkg glib2
 __install_pkg glibc
 __install_pkg glibc-common
@@ -430,17 +425,16 @@ __install_pkg gpm-libs
 __install_pkg graphite2
 __install_pkg grep
 __install_pkg groff-base
-__install_pkg grub2
+__install_pkg grub2-tools
 __install_pkg grub2-common
 __install_pkg grub2-pc
 __install_pkg grub2-pc-modules
-__install_pkg grub2-tools
 __install_pkg grub2-tools-extra
 __install_pkg grub2-tools-minimal
 __install_pkg grubby
 __install_pkg gsettings-desktop-schemas
 __install_pkg gzip
-__install_pkg hardlink
+__install_pkg util-linux-core
 __install_pkg harfbuzz
 __install_pkg hdparm
 __install_pkg hostname
@@ -488,7 +482,6 @@ __install_pkg lzop
 __install_pkg m4
 __install_pkg mailcap
 __install_pkg mailman
-__install_pkg mailx
 __install_pkg make
 __install_pkg man-db
 __install_pkg mesa-libEGL
@@ -496,7 +489,7 @@ __install_pkg mesa-libgbm
 __install_pkg mesa-libGL
 __install_pkg mesa-libglapi
 __install_pkg microcode_ctl
-__install_pkg mlocate
+__install_pkg plocate
 __install_pkg mod_fcgid
 __install_pkg mod_geoip
 __install_pkg mod_http2
@@ -516,7 +509,6 @@ __install_pkg net-snmp-agent-libs
 __install_pkg net-snmp-libs
 __install_pkg net-snmp-utils
 __install_pkg nettle
-__install_pkg net-tools
 __install_pkg NetworkManager
 __install_pkg NetworkManager-libnm
 __install_pkg NetworkManager-ppp
@@ -554,7 +546,7 @@ __install_pkg p7zip-plugins
 __install_pkg pam
 __install_pkg pango
 __install_pkg parted
-__install_pkg passwd
+__install_pkg shadow-utils
 __install_pkg pax
 __install_pkg pcre
 __install_pkg pcre-devel
@@ -844,7 +836,6 @@ __install_pkg selinux-policy-targeted
 __install_pkg sendmail-milter
 __install_pkg setools-libs
 __install_pkg setup
-__install_pkg shadow-utils
 __install_pkg shared-mime-info
 __install_pkg shorewall
 __install_pkg shorewall6
@@ -880,9 +871,7 @@ __install_pkg vim-common
 __install_pkg vim-enhanced
 __install_pkg vim-filesystem
 __install_pkg vim-minimal
-__install_pkg vnstat
 __install_pkg webalizer
-__install_pkg wget
 __install_pkg which
 __install_pkg wpa_supplicant
 __install_pkg xfsprogs
@@ -896,7 +885,7 @@ __install_pkg yum-metadata-parser
 __install_pkg yum-plugin-fastestmirror
 __install_pkg yum-utils
 __install_pkg zeromq3
-__install_pkg zlib
+__install_pkg zlib-ng-compat
 __install_pkg zlib-devel
 
 ##################################################################################################################
@@ -936,41 +925,41 @@ fi
 ##################################################################################################################
 __printf_head "Disabling services"
 ##################################################################################################################
-system_service_disable firewalld
-system_service_disable chrony
-system_service_disable kdump
-system_service_disable iscsid.socket
-system_service_disable iscsi
-system_service_disable iscsiuio.socket
-system_service_disable lvm2-lvmetad.socket
-system_service_disable lvm2-lvmpolld.socket
-system_service_disable lvm2-monitor
-system_service_disable mdmonitor
-system_service_disable fail2ban
-system_service_disable shorewall
-system_service_disable shorewall6
-system_service_disable dhcpd
-system_service_disable dhcpd6
-system_service_disable radvd
+__system_service_disable firewalld
+__system_service_disable chrony
+__system_service_disable kdump
+__system_service_disable iscsid.socket
+__system_service_disable iscsi
+__system_service_disable iscsiuio.socket
+__system_service_disable lvm2-lvmetad.socket
+__system_service_disable lvm2-lvmpolld.socket
+__system_service_disable lvm2-monitor
+__system_service_disable mdmonitor
+__system_service_disable fail2ban
+__system_service_disable shorewall
+__system_service_disable shorewall6
+__system_service_disable dhcpd
+__system_service_disable dhcpd6
+__system_service_disable radvd
 
 ##################################################################################################################
 __printf_head "Enabling services"
 ##################################################################################################################
-system_service_enable sshd
-system_service_enable tor
-system_service_enable munin-node
-system_service_enable cockpit
-system_service_enable postfix
-system_service_enable uptimed
-system_service_enable php-fpm
-system_service_enable proftpd
-system_service_enable rsyslog
-system_service_enable ntpd
-system_service_enable snmpd
-system_service_enable cockpit.socket
-system_service_enable named
-system_service_enable httpd
-system_service_enable nginx
+__system_service_enable sshd
+__system_service_enable tor
+__system_service_enable munin-node
+__system_service_enable cockpit
+__system_service_enable postfix
+__system_service_enable uptimed
+__system_service_enable php-fpm
+__system_service_enable proftpd
+__system_service_enable rsyslog
+__system_service_enable ntpd
+__system_service_enable snmpd
+__system_service_enable cockpit.socket
+__system_service_enable named
+__system_service_enable httpd
+__system_service_enable nginx
 
 ##################################################################################################################
 __printf_head "Cleaning up"
