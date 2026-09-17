@@ -314,7 +314,7 @@ __port_in_use() { netstatg 2>&1 | awk '{print $4}' | grep -- ':[0-9]' | awk -F':
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 __system_service_exists() { systemctl status "$1" 2>&1 | grep -- 'Loaded:' | grep -iq -- "$1" && return 0 || return 1; }
 __system_service_active() { (systemctl is-enabled "$1" || systemctl is-active "$1") | grep -qiE -- 'enabled|active' || return 1; }
-system_service_enable() { systemctl status "$1" 2>&1 | grep -iq -- 'inactive' && __execute "systemctl enable --now $1" "Enabling service: $1" || return 1; }
+system_service_enable() { systemctl is-enabled --quiet "$1" 2>/dev/null || __execute "systemctl enable --now $1" "Enabling service: $1" || return 1; }
 system_service_disable() { systemctl is-active --quiet "$1" && __execute "systemctl disable --now $1" "Disabling service: $1" || return 1; }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 __does_user_exist() { grep -qs -- "^$1:" "/etc/passwd" || return 1; }
@@ -548,6 +548,10 @@ __run_grub() {
 		if [ -n "$grub_efi" ]; then
 			for efi in $grub_efi; do
 				if [ -e "$efi" ]; then
+					# EL9+/Fedora/Debian ship /boot/efi/EFI/{distro}/grub.cfg as a stub that only chainloads the real grub.cfg - grub-mkconfig refuses to overwrite it, so skip it
+					if grep -qs -- 'configfile' "$efi" && ! grep -qs -- 'BEGIN /etc/grub.d/' "$efi"; then
+						continue
+					fi
 					if __devnull $grub_bin -o "$efi"; then
 						__printf_green "Updated $efi"
 					else
@@ -1105,7 +1109,7 @@ if [ -f "/etc/fail2ban/jail.local" ]; then
 	# jail picks it up immediately with no further changes here.
 	__devnull mkdir -p /var/log/proftpd /var/log/httpd /var/log/nginx /var/log/named /var/log/mysql /var/opt/mssql/log
 	__devnull touch /var/log/proftpd/auth.log /var/log/httpd/error_log /var/log/nginx/error.log /var/log/nginx/access.log
-	__devnull touch /var/log/named/security.log /var/log/mysql/mysql.log /var/opt/mssql/log/errorlog /var/log/maillog /var/log/secure
+	__devnull touch /var/log/named/security.log /var/log/mysql/mysql.log /var/opt/mssql/log/errorlog /var/log/maillog /var/log/secure /var/log/fail2ban.log
 fi
 __devnull sed -i "s#myserverdomainname#$HOSTNAME#g" /etc/sysconfig/network
 __devnull sed -i "s#mydomain#$set_domainname#g" /etc/sysconfig/network
