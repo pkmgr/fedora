@@ -818,7 +818,8 @@ printf_head "Installing the packages for $RELEASE_NAME"
 ##################################################################################################################
 # __install_pkg awffull  # skipped on fedora
 __install_pkg awstats
-__install_pkg basesystem
+# __install_pkg basesystem  # RHEL-only concept, no Fedora equivalent (fedora-release below covers it)
+__install_pkg fedora-release
 __install_pkg bash
 __install_pkg bash-completion
 __install_pkg biosdevname
@@ -903,27 +904,18 @@ __install_pkg perl-DBD-MySQL
 __install_pkg perl-DBD-SQLite
 __install_pkg perl-DBD-MariaDB
 # __install_pkg perl-DBD-Firebird  # skipped on fedora
-# Enable Remi PHP 7.4 module stream before installing PHP packages.
-# casjay.repo excludes php* from AppStream to force Remi; the module must
-# be enabled first and AppStream excludes bypassed so dnf resolves from Remi.
-if type -P dnf >/dev/null 2>&1 && dnf module list php 2>/dev/null | grep -q -- 'remi-7.4'; then
-	dnf module reset php -y >/dev/null 2>&1 || true
-	dnf module enable php:remi-7.4 -y >/dev/null 2>&1 || true
-	_php_install_opts="--disableexcludes=casjay-os-appstream"
-fi
-__install_pkg php $_php_install_opts
-__install_pkg php-cli $_php_install_opts
-__install_pkg php-common $_php_install_opts
-__install_pkg php-fpm $_php_install_opts
-__install_pkg php-gd $_php_install_opts
-__install_pkg php-gmp $_php_install_opts
-__install_pkg php-intl $_php_install_opts
-__install_pkg php-mbstring $_php_install_opts
-__install_pkg php-mysqlnd $_php_install_opts
-__install_pkg php-pdo $_php_install_opts
-__install_pkg php-pgsql $_php_install_opts
-__install_pkg php-xml $_php_install_opts
-unset _php_install_opts
+__install_pkg php
+__install_pkg php-cli
+__install_pkg php-common
+__install_pkg php-fpm
+__install_pkg php-gd
+__install_pkg php-gmp
+__install_pkg php-intl
+__install_pkg php-mbstring
+__install_pkg php-mysqlnd
+__install_pkg php-pdo
+__install_pkg php-pgsql
+__install_pkg php-xml
 __install_pkg pinentry
 __install_pkg postfix
 __install_pkg postfix-pcre
@@ -1219,8 +1211,15 @@ fi
 devnull firewall-cmd --permanent --zone=public --add-service=http
 devnull firewall-cmd --permanent --zone=public --add-service=https
 devnull firewall-cmd --permanent --zone=public --remove-service=cockpit
-devnull firewall-cmd --permanent --zone=trusted --change-interface=docker0
-devnull firewall-cmd --permanent --zone=trusted --change-interface=incusbr0
+# docker-ce auto-manages its own "docker" firewalld zone for docker0 at
+# runtime (D-Bus, target=ACCEPT) - a manual --change-interface=docker0
+# binding here collides with it (ZONE_CONFLICT: interface already bound
+# to a zone), so it has been dropped. incus does NOT self-manage a zone
+# (ipv4.firewall/ipv6.firewall=false on its networks - it deliberately
+# leaves firewalling to the host), so incusbr0 keeps its explicit bind.
+if devnull command -v incus; then
+	devnull firewall-cmd --permanent --zone=trusted --change-interface=incusbr0
+fi
 devnull firewall-cmd --permanent --direct --add-rule ipv4 filter INPUT 0 -p icmp -s 0.0.0.0/0 -d 0.0.0.0/0 -j ACCEPT
 devnull firewall-cmd --reload
 devnull systemctl stop firewalld
