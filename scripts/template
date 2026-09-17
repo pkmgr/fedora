@@ -149,11 +149,11 @@ __execute() {
 [[ "$1" == "--help" ]] && __printf_exit "${GREEN}${SCRIPT_DESCRIBE} installer for $SCRIPT_OS"
 cat /etc/*-release | grep -E -- 'ID=|ID_LIKE=' | grep -qwE -- "$SCRIPT_OS" &>/dev/null && true || __printf_exit "This installer is meant to be run on a $SCRIPT_OS based system"
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-system_service_exists() { systemctl status "$1" 2>&1 | grep -iq -- "$1" && return 0 || return 1; }
+__system_service_exists() { systemctl status "$1" 2>&1 | grep -iq -- "$1" && return 0 || return 1; }
 system_service_enable() { systemctl status "$1" 2>&1 | grep -iq -- 'inactive' && __execute "systemctl enable $1" "Enabling service: $1" || return 1; }
 system_service_disable() { systemctl status "$1" 2>&1 | grep -iq -- 'active' && __execute "systemctl disable --now $1" "Disabling service: $1" || return 1; }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-test_pkg() {
+__test_pkg() {
   for pkg in "$@"; do
     if rpm -q "$pkg" &>/dev/null; then
       __printf_blue "[ ✔ ] $pkg is already installed"
@@ -164,25 +164,25 @@ test_pkg() {
   done
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-remove_pkg() {
-  test_pkg "$*" &>/dev/null || __execute "yum remove -q -y $*" "Removing: $*"
-  test_pkg "$*" &>/dev/null || return 0
+__remove_pkg() {
+  __test_pkg "$*" &>/dev/null || __execute "yum remove -q -y $*" "Removing: $*"
+  __test_pkg "$*" &>/dev/null || return 0
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-install_pkg() {
-  test_pkg "$*" && if __execute "yum install -q -y --skip-broken $*" "Installing: $*"; then
-    test_pkg "$*" &>/dev/null && return 0 || return 1
+__install_pkg() {
+  __test_pkg "$*" && if __execute "yum install -q -y --skip-broken $*" "Installing: $*"; then
+    __test_pkg "$*" &>/dev/null && return 0 || return 1
   else
     return 1
   fi
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-detect_selinux() {
+__detect_selinux() {
   selinuxenabled
   if [ $? -ne 0 ]; then return 0; else return 1; fi
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-disable_selinux() {
+__disable_selinux() {
   if selinuxenabled; then
     __printf_blue "Disabling selinux"
     __devnull setenforce 0
@@ -191,7 +191,7 @@ disable_selinux() {
   fi
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-ssh_key() {
+__ssh_key() {
   __printf_green "Grabbing $GITHUB_USER ssh key"
   [[ -d "/root/.ssh" ]] || mkdir -p "/root/.ssh"
   if __urlverify "https://github.com/$GITHUB_USER.keys"; then
@@ -203,19 +203,19 @@ ssh_key() {
   return 0
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-rm_repo_files() { __printf_green "Removing files from /etc/yum.repos.d" && rm -Rf /etc/yum.repos.d/*; }
-run_external() { __printf_green "Executing $*" && eval "$*" >/dev/null 2>&1 || return 1; }
-grab_remote_file() { __urlverify "$1" && curl -q -SLs "$1" || exit 1; }
-save_remote_file() { __urlverify "$1" && curl -q -SLs "$1" | tee "$2" &>/dev/null || exit 1; }
-retrieve_version_file() { grab_remote_file "https://github.com/casjay-base/rhel/raw/main/version.txt" | head -n1 || echo "Unknown version"; }
+__rm_repo_files() { __printf_green "Removing files from /etc/yum.repos.d" && rm -Rf /etc/yum.repos.d/*; }
+__run_external() { __printf_green "Executing $*" && eval "$*" >/dev/null 2>&1 || return 1; }
+__grab_remote_file() { __urlverify "$1" && curl -q -SLs "$1" || exit 1; }
+__save_remote_file() { __urlverify "$1" && curl -q -SLs "$1" | tee "$2" &>/dev/null || exit 1; }
+__retrieve_version_file() { __grab_remote_file "https://github.com/casjay-base/rhel/raw/main/version.txt" | head -n1 || echo "Unknown version"; }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-retrieve_repo_file() {
+__retrieve_repo_file() {
   local RELEASE_FILE IFS
   RELEASE_FILE="https://github.com/rpm-devel/casjay-release/raw/main/fedora.repo"
-  save_remote_file "$RELEASE_FILE" "/etc/yum.repos.d/casjay.repo"
+  __save_remote_file "$RELEASE_FILE" "/etc/yum.repos.d/casjay.repo"
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-run_grub() {
+__run_grub() {
   __printf_green "Setting up grub"
   local grub_cnf="/boot/grub/grub.cfg"
   local grub2_cnf="/boot/grub2/grub.cfg"
@@ -231,7 +231,7 @@ run_grub() {
   fi
 }
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-run_post() {
+__run_post() {
   local e="$*"
   local m="${e//__devnull /}"
   __execute "$e" "executing: $m"
@@ -252,30 +252,30 @@ if [ -f /etc/casjaysdev/updates/versions/default.txt ]; then
 fi
 if ! builtin type -P systemmgr &>/dev/null; then
   if [[ -d "/usr/local/share/CasjaysDev/scripts" ]]; then
-    run_external "git -C https://github.com/casjay-dotfiles/scripts pull"
+    __run_external "git -C https://github.com/casjay-dotfiles/scripts pull"
   else
-    run_external "git clone https://github.com/casjay-dotfiles/scripts /usr/local/share/CasjaysDev/scripts"
+    __run_external "git clone https://github.com/casjay-dotfiles/scripts /usr/local/share/CasjaysDev/scripts"
   fi
-  run_external /usr/local/share/CasjaysDev/scripts/install.sh
-  run_external systemmgr --config &>/dev/null
-  run_external systemmgr install scripts
-  run_external "yum clean all"
+  __run_external /usr/local/share/CasjaysDev/scripts/install.sh
+  __run_external systemmgr --config &>/dev/null
+  __run_external systemmgr install scripts
+  __run_external "yum clean all"
 fi
 if [ "$(hostname -s)" != "pbx" ]; then
-  rm_repo_files
-  retrieve_repo_file
+  __rm_repo_files
+  __retrieve_repo_file
 fi
 __printf_green "Installer has been initialized"
 
 ##################################################################################################################
 __printf_head "Disabling selinux"
 ##################################################################################################################
-disable_selinux
+__disable_selinux
 
 ##################################################################################################################
 __printf_head "Configuring cores for compiling"
 ##################################################################################################################
-numberofcores=$(grep -c ^processor /proc/cpuinfo)
+numberofcores=$(grep -c -- '^processor' /proc/cpuinfo)
 __printf_yellow "Total cores avaliable: $numberofcores"
 if [ -f /etc/makepkg.conf ]; then
   if [ $numberofcores -gt 1 ]; then
@@ -286,48 +286,48 @@ fi
 ##################################################################################################################
 __printf_head "Grabbing ssh key from github"
 ##################################################################################################################
-ssh_key
+__ssh_key
 
 ##################################################################################################################
 __printf_head "Configuring the system"
 ##################################################################################################################
-run_external yum clean all
-run_external yum update -q -y --skip-broken
-install_pkg vnstat
+__run_external yum clean all
+__run_external yum update -q -y --skip-broken
+__install_pkg vnstat
 system_service_enable vnstat
-install_pkg net-tools
-install_pkg wget
-install_pkg curl
-install_pkg git
-install_pkg nail
-install_pkg e2fsprogs
-install_pkg redhat-lsb
-install_pkg neovim
-install_pkg unzip
-run_external rm -Rf /tmp/dotfiles
-run_external timedatectl set-timezone America/New_York
-install_pkg cronie-noanacron
+__install_pkg net-tools
+__install_pkg wget
+__install_pkg curl
+__install_pkg git
+__install_pkg nail
+__install_pkg e2fsprogs
+__install_pkg redhat-lsb
+__install_pkg neovim
+__install_pkg unzip
+__run_external rm -Rf /tmp/dotfiles
+__run_external timedatectl set-timezone America/New_York
+__install_pkg cronie-noanacron
 for rpms in echo cronie-anacron sendmail sendmail-cf; do
   rpm -ev --nodeps $rpms &>/dev/null
 done
-run_external rm -Rf /root/anaconda-ks.cfg /var/log/anaconda
+__run_external rm -Rf /root/anaconda-ks.cfg /var/log/anaconda
 if [ "$(hostname -s)" != "pbx" ]; then
-  rm_repo_files
-  retrieve_repo_file
+  __rm_repo_files
+  __retrieve_repo_file
 fi
-run_external yum clean all
-run_external yum update -q -y --skip-broken
-run_grub
+__run_external yum clean all
+__run_external yum update -q -y --skip-broken
+__run_grub
 
 ##################################################################################################################
 __printf_head "Installing the packages for $SCRIPT_DESCRIBE"
 ##################################################################################################################
-install_pkg rpm
+__install_pkg rpm
 
 ##################################################################################################################
 __printf_head "Fixing packages"
 ##################################################################################################################
-run_grub
+__run_grub
 rm -Rf /etc/named* /var/named/* /etc/ntp* /etc/cron*/0* /etc/cron*/dailyjobs /var/ftp/uploads /etc/httpd/conf.d/ssl.conf /tmp/configs
 
 ##################################################################################################################
@@ -427,14 +427,14 @@ if [ -f /var/lib/tor/hidden_service/hostname ]; then
   cp -Rf /var/lib/tor/hidden_service/hostname /var/www/html/tor_hostname
 fi
 if [ "$(hostname -s)" != "pbx" ]; then
-  rm_repo_files
-  retrieve_repo_file
+  __rm_repo_files
+  __retrieve_repo_file
 fi
 chown -Rf apache:apache /var/www
 history -c && history -w
 
 ##################################################################################################################
-__printf_info "Installer version: $(retrieve_version_file)"
+__printf_info "Installer version: $(__retrieve_version_file)"
 ##################################################################################################################
 mkdir -p /etc/casjaysdev/updates/versions
 echo "$VERSION" >/etc/casjaysdev/updates/versions/configs.txt
