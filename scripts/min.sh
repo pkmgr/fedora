@@ -309,9 +309,13 @@ case "${SET_HOSTNAME:-$HOSTNAME}" in
 	devel*|build*|ci*|testing*)      SYSTEM_TYPE="devel" ;;
 esac
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-SERVICES_ENABLE="cockpit cockpit.socket docker httpd munin-node nginx ntpd php-fpm postfix proftpd rsyslog snmpd sshd uptimed downtimed "
+SERVICES_ENABLE="cockpit cockpit.socket docker fail2ban firewalld httpd munin-node nginx ntpd php-fpm postfix proftpd rsyslog snmpd sshd uptimed downtimed "
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-SERVICES_DISABLE="avahi-daemon.service avahi-daemon.socket cups.path cups.service cups.socket dhcpd dhcpd6 dm-event.socket fail2ban firewalld import-state.service irqbalance.service iscsi iscsid.socket iscsiuio.socket kdump loadmodules.service lvm2-lvmetad.socket lvm2-lvmpolld.socket lvm2-monitor mdmonitor multipathd.service multipathd.socket named nfs-client.target nis-domainname.service nmb radvd rpcbind.service rpcbind.socket shorewall shorewall6 smb sssd-kcm.socket timedatex.service tuned.service udisks2.service"
+# fail2ban and firewalld were previously in SERVICES_DISABLE, leaving
+# fedora hosts with no firewall and no intrusion protection at all -
+# moved to SERVICES_ENABLE above to match rhel and the allow-all +
+# fail2ban-protects firewall policy (AI.md's "Firewall policy" section).
+SERVICES_DISABLE="avahi-daemon.service avahi-daemon.socket cups.path cups.service cups.socket dhcpd dhcpd6 dm-event.socket import-state.service irqbalance.service iscsi iscsid.socket iscsiuio.socket kdump loadmodules.service lvm2-lvmetad.socket lvm2-lvmpolld.socket lvm2-monitor mdmonitor multipathd.service multipathd.socket named nfs-client.target nis-domainname.service nmb radvd rpcbind.service rpcbind.socket shorewall shorewall6 smb sssd-kcm.socket timedatex.service tuned.service udisks2.service"
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 if [ "$RELEASE_TYPE" != "rhel" ]; then
 	__printf_exit "This installer is meant to be run on a $SCRIPT_OS based system"
@@ -1658,28 +1662,29 @@ fi
 ##################################################################################################################
 __printf_head "Configuring the firewall"
 ##################################################################################################################
-__devnull systemctl start firewalld
-__devnull firewall-cmd --permanent --zone=public --add-service=ssh
-if __devnull firewall-cmd --info-service=mosh; then
-	__devnull firewall-cmd --permanent --zone=public --add-service=mosh
-else
-	__devnull firewall-cmd --permanent --zone=public --add-port=60000-61000/udp
-fi
-__devnull firewall-cmd --permanent --zone=public --add-service=http
-__devnull firewall-cmd --permanent --zone=public --add-service=https
-__devnull firewall-cmd --permanent --zone=public --remove-service=cockpit
+# Firewall policy (AI.md's "Firewall policy" section): allow everything
+# by default, fail2ban is the actual protection layer - a restrictive
+# per-service allowlist here was both contradicting that policy and
+# actively wrong (SERVICES_ENABLE/SERVICES_DISABLE above previously had
+# firewalld itself disabled, and this block used to stop it again at
+# the end, so none of these add-service rules ever mattered in
+# practice). SMB/NetBIOS is the one static exception, dropped outright.
 # docker-ce auto-manages its own "docker" firewalld zone for docker0 at
 # runtime (D-Bus, target=ACCEPT) - a manual --change-interface=docker0
 # binding here collides with it (ZONE_CONFLICT: interface already bound
 # to a zone), so it has been dropped. incus does NOT self-manage a zone
 # (ipv4.firewall/ipv6.firewall=false on its networks - it deliberately
 # leaves firewalling to the host), so incusbr0 keeps its explicit bind.
+# libvirt needs no equivalent block: its predefined "libvirt" zone
+# already ships target=ACCEPT and libvirtd self-manages virbr0's zone
+# membership the same way docker-ce does.
+__devnull systemctl start firewalld
+__devnull firewall-cmd --permanent --zone=public --set-target=ACCEPT
+__devnull firewall-cmd --permanent --zone=public --add-rich-rule='rule service name="samba" drop'
 if __devnull command -v incus; then
 	__devnull firewall-cmd --permanent --zone=trusted --change-interface=incusbr0
 fi
-__devnull firewall-cmd --permanent --direct --add-rule ipv4 filter INPUT 0 -p icmp -s 0.0.0.0/0 -d 0.0.0.0/0 -j ACCEPT
 __devnull firewall-cmd --reload
-__devnull systemctl stop firewalld
 ##################################################################################################################
 __printf_head "Disabling dnsmasq"
 ##################################################################################################################
